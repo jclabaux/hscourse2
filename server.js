@@ -17,36 +17,55 @@ async function initDB() {
   const client = await pool.connect();
   try {
     await client.query(`
-      CREATE TABLE IF NOT EXISTS suppliers (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL UNIQUE,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
       CREATE TABLE IF NOT EXISTS clients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL,
         email TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL DEFAULT '1234',
+        address TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
-      CREATE TABLE IF NOT EXISTS client_suppliers (
+      CREATE TABLE IF NOT EXISTS recipients (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL,
+        email TEXT DEFAULT '',
+        address TEXT DEFAULT '',
+        phone TEXT DEFAULT '',
+        added_by_client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS client_recipients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
-        supplier_id UUID REFERENCES suppliers(id) ON DELETE CASCADE,
-        UNIQUE(client_id, supplier_id)
+        recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
+        UNIQUE(client_id, recipient_id)
       );
 
       CREATE TABLE IF NOT EXISTS orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
-        supplier_id UUID REFERENCES suppliers(id) ON DELETE CASCADE,
+        recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
         quantity INTEGER NOT NULL DEFAULT 0,
         comment TEXT DEFAULT '',
-        submitted_at TIMESTAMPTZ,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        UNIQUE(client_id, supplier_id)
+        ordered_at TIMESTAMPTZ DEFAULT NOW(),
+        month_label TEXT NOT NULL,
+        UNIQUE(client_id, recipient_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS order_history (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+        client_name TEXT NOT NULL,
+        recipient_id UUID REFERENCES recipients(id) ON DELETE SET NULL,
+        recipient_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        comment TEXT DEFAULT '',
+        ordered_at TIMESTAMPTZ,
+        exported_at TIMESTAMPTZ DEFAULT NOW(),
+        month_label TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS config (
@@ -54,43 +73,49 @@ async function initDB() {
         value TEXT NOT NULL
       );
 
-      INSERT INTO config (key, value) VALUES ('admin_password', 'admin123')
-        ON CONFLICT (key) DO NOTHING;
+      INSERT INTO config (key, value) VALUES
+        ('admin_password', 'admin123'),
+        ('start_hour', '6'),
+        ('end_hour', '18')
+      ON CONFLICT (key) DO NOTHING;
     `);
-    console.log('✓ Database initialized');
+    console.log('✓ Base de données initialisée');
   } finally {
     client.release();
   }
 }
 
-// ── MIDDLEWARE AUTH ───────────────────────────────────────
+// ── HELPERS ───────────────────────────────────────────────
+function monthLabel(date) {
+  const d = date || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+
 function requireAdmin(req, res, next) {
-  const token = req.headers['x-admin-token'];
-  if (token !== 'admin-authenticated') {
+  if (req.headers['x-admin-token'] !== 'admin-ok') {
     return res.status(401).json({ error: 'Non autorisé' });
   }
   next();
 }
 
-// ── AUTH ROUTES ───────────────────────────────────────────
+// ── AUTH ──────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
   try {
-    if (email.toLowerCase() === 'admin') {
-      const result = await pool.query("SELECT value FROM config WHERE key = 'admin_password'");
-      const adminPwd = result.rows[0]?.value;
-      if (password === adminPwd) {
+    if ((email || '').toLowerCase().trim() === 'admin') {
+      const r = await pool.query("SELECT value FROM config WHERE key = 'admin_password'");
+      if (r.rows[0]?.value === password) {
         return res.json({ role: 'admin', name: 'Administrateur' });
       }
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
-    const result = await pool.query(
-      'SELECT id, name, email, password FROM clients WHERE LOWER(email) = LOWER($1)',
-      [email]
+    const r = await pool.query(
+      'SELECT id, name, email, password, address, phone FROM clients WHERE LOWER(email) = LOWER($1)',
+      [email.trim()]
     );
-    const client = result.rows[0];
-    if (client && client.password === password) {
-      return res.json({ role: 'client', id: client.id, name: client.name, email: client.email });
+    const c = r.rows[0];
+    if (c && c.password === password) {
+      return res.json({ role: 'client', id: c.id, name: c.name, email: c.email, address: c.address, phone: c.phone });
     }
     return res.status(401).json({ error: 'Identifiants incorrects' });
   } catch (e) {
@@ -101,76 +126,71 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/change-password', async (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
   try {
-    const result = await pool.query(
-      'SELECT id, password FROM clients WHERE LOWER(email) = LOWER($1)',
-      [email]
-    );
-    const client = result.rows[0];
-    if (!client || client.password !== oldPassword) {
-      return res.status(401).json({ error: 'Ancien mot de passe incorrect' });
-    }
-    await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, client.id]);
+    const r = await pool.query('SELECT id, password FROM clients WHERE LOWER(email) = LOWER($1)', [email]);
+    const c = r.rows[0];
+    if (!c || c.password !== oldPassword) return res.status(401).json({ error: 'Ancien mot de passe incorrect' });
+    await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, c.id]);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── SUPPLIERS ROUTES ──────────────────────────────────────
-app.get('/api/suppliers', async (req, res) => {
+// ── CONFIG ────────────────────────────────────────────────
+app.get('/api/config', async (req, res) => {
   try {
-    const result = await pool.query('SELECT id, name FROM suppliers ORDER BY name');
-    res.json(result.rows);
+    const r = await pool.query("SELECT key, value FROM config WHERE key IN ('start_hour','end_hour')");
+    const cfg = {};
+    r.rows.forEach(row => { cfg[row.key] = row.value; });
+    res.json(cfg);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/suppliers', requireAdmin, async (req, res) => {
-  const { name, email } = req.body;
+app.post('/api/config', requireAdmin, async (req, res) => {
+  const { start_hour, end_hour, admin_password } = req.body;
   try {
-    const result = await pool.query(
-      'INSERT INTO suppliers (name, email) VALUES ($1, $2) RETURNING id, name, email',
-      [name, email]
-    );
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/api/suppliers/:id', requireAdmin, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM suppliers WHERE id = $1', [req.params.id]);
+    if (start_hour !== undefined) await pool.query("UPDATE config SET value = $1 WHERE key = 'start_hour'", [String(start_hour)]);
+    if (end_hour !== undefined) await pool.query("UPDATE config SET value = $1 WHERE key = 'end_hour'", [String(end_hour)]);
+    if (admin_password) await pool.query("UPDATE config SET value = $1 WHERE key = 'admin_password'", [admin_password]);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── CLIENTS ROUTES ────────────────────────────────────────
+// ── CLIENTS ───────────────────────────────────────────────
 app.get('/api/clients', requireAdmin, async (req, res) => {
   try {
-    const clients = await pool.query('SELECT id, name, email FROM clients ORDER BY name');
-    const assignments = await pool.query('SELECT client_id, supplier_id FROM client_suppliers');
-    const result = clients.rows.map(c => ({
-      ...c,
-      suppliers: assignments.rows.filter(a => a.client_id === c.id).map(a => a.supplier_id)
-    }));
-    res.json(result);
+    const r = await pool.query('SELECT id, name, email, address, phone, created_at FROM clients ORDER BY name');
+    res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 app.post('/api/clients', requireAdmin, async (req, res) => {
-  const { name, email } = req.body;
+  const { name, email, address, phone } = req.body;
   try {
-    const result = await pool.query(
-      "INSERT INTO clients (name, email, password) VALUES ($1, $2, '1234') RETURNING id, name, email",
-      [name, email]
+    const r = await pool.query(
+      "INSERT INTO clients (name, email, address, phone, password) VALUES ($1, $2, $3, $4, '1234') RETURNING id, name, email, address, phone",
+      [name, email, address || '', phone || '']
     );
-    res.json(result.rows[0]);
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/clients/:id', requireAdmin, async (req, res) => {
+  const { name, email, address, phone } = req.body;
+  try {
+    await pool.query(
+      'UPDATE clients SET name=$1, email=$2, address=$3, phone=$4 WHERE id=$5',
+      [name, email, address || '', phone || '', req.params.id]
+    );
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -185,27 +205,101 @@ app.delete('/api/clients/:id', requireAdmin, async (req, res) => {
   }
 });
 
-// ── CLIENT SUPPLIERS ──────────────────────────────────────
-app.get('/api/clients/:id/suppliers', async (req, res) => {
+app.post('/api/clients/:id/reset-password', requireAdmin, async (req, res) => {
   try {
-    const result = await pool.query(
-      `SELECT s.id, s.name FROM suppliers s
-       INNER JOIN client_suppliers cs ON cs.supplier_id = s.id
-       WHERE cs.client_id = $1 ORDER BY s.name`,
+    await pool.query("UPDATE clients SET password = '1234' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── RECIPIENTS ────────────────────────────────────────────
+app.get('/api/recipients', requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT id, name, email, address, phone FROM recipients ORDER BY name');
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/recipients', async (req, res) => {
+  const { name, email, address, phone, client_id } = req.body;
+  const isAdmin = req.headers['x-admin-token'] === 'admin-ok';
+  try {
+    const r = await pool.query(
+      'INSERT INTO recipients (name, email, address, phone, added_by_client_id) VALUES ($1,$2,$3,$4,$5) RETURNING id, name, email, address, phone',
+      [name, email || '', address || '', phone || '', client_id || null]
+    );
+    const recipient = r.rows[0];
+    // Auto-assign to client if added by client
+    if (client_id) {
+      await pool.query(
+        'INSERT INTO client_recipients (client_id, recipient_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+        [client_id, recipient.id]
+      );
+    }
+    res.json(recipient);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/recipients/:id', requireAdmin, async (req, res) => {
+  const { name, email, address, phone } = req.body;
+  try {
+    await pool.query(
+      'UPDATE recipients SET name=$1, email=$2, address=$3, phone=$4 WHERE id=$5',
+      [name, email || '', address || '', phone || '', req.params.id]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/recipients/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM recipients WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── CLIENT-RECIPIENTS ASSIGNMENTS ────────────────────────
+app.get('/api/clients/:id/recipients', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT r.id, r.name, r.email, r.address, r.phone
+       FROM recipients r
+       JOIN client_recipients cr ON cr.recipient_id = r.id
+       WHERE cr.client_id = $1
+       ORDER BY r.name`,
       [req.params.id]
     );
-    res.json(result.rows);
+    res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-app.post('/api/clients/:id/suppliers', requireAdmin, async (req, res) => {
-  const { supplier_id } = req.body;
+app.get('/api/assignments', requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query('SELECT client_id, recipient_id FROM client_recipients');
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/assignments', requireAdmin, async (req, res) => {
+  const { client_id, recipient_id } = req.body;
   try {
     await pool.query(
-      'INSERT INTO client_suppliers (client_id, supplier_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
-      [req.params.id, supplier_id]
+      'INSERT INTO client_recipients (client_id, recipient_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+      [client_id, recipient_id]
     );
     res.json({ success: true });
   } catch (e) {
@@ -213,11 +307,12 @@ app.post('/api/clients/:id/suppliers', requireAdmin, async (req, res) => {
   }
 });
 
-app.delete('/api/clients/:id/suppliers/:supplierId', requireAdmin, async (req, res) => {
+app.delete('/api/assignments', requireAdmin, async (req, res) => {
+  const { client_id, recipient_id } = req.body;
   try {
     await pool.query(
-      'DELETE FROM client_suppliers WHERE client_id = $1 AND supplier_id = $2',
-      [req.params.id, req.params.supplierId]
+      'DELETE FROM client_recipients WHERE client_id=$1 AND recipient_id=$2',
+      [client_id, recipient_id]
     );
     res.json({ success: true });
   } catch (e) {
@@ -225,106 +320,160 @@ app.delete('/api/clients/:id/suppliers/:supplierId', requireAdmin, async (req, r
   }
 });
 
-// ── ORDERS ROUTES ─────────────────────────────────────────
-app.get('/api/orders', requireAdmin, async (req, res) => {
-  try {
-    const result = await pool.query(`
-      SELECT o.id, o.quantity, o.comment, o.submitted_at,
-             c.id as client_id, c.name as client_name, c.email as client_email,
-             s.id as supplier_id, s.name as supplier_name
-      FROM orders o
-      JOIN clients c ON c.id = o.client_id
-      JOIN suppliers s ON s.id = o.supplier_id
-      WHERE o.quantity > 0
-      ORDER BY c.name, s.name
-    `);
-    res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
+// ── ORDERS ────────────────────────────────────────────────
 app.get('/api/orders/client/:clientId', async (req, res) => {
   try {
-    const result = await pool.query(
-      'SELECT id, supplier_id, quantity, comment FROM orders WHERE client_id = $1',
+    const r = await pool.query(
+      `SELECT o.id, o.recipient_id, o.quantity, o.comment, o.ordered_at,
+              r.name as recipient_name
+       FROM orders o
+       JOIN recipients r ON r.id = o.recipient_id
+       WHERE o.client_id = $1`,
       [req.params.clientId]
     );
-    res.json(result.rows);
+    res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
 app.post('/api/orders', async (req, res) => {
-  const { client_id, supplier_id, quantity, comment } = req.body;
+  const { client_id, recipient_id, quantity, comment } = req.body;
+  const ml = monthLabel();
   try {
-    const result = await pool.query(`
-      INSERT INTO orders (client_id, supplier_id, quantity, comment, submitted_at)
-      VALUES ($1, $2, $3, $4, NOW())
-      ON CONFLICT (client_id, supplier_id)
-      DO UPDATE SET quantity = $3, comment = $4, submitted_at = NOW()
-      RETURNING id
-    `, [client_id, supplier_id, quantity, comment || '']);
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/api/orders', requireAdmin, async (req, res) => {
-  try {
-    await pool.query('DELETE FROM orders WHERE quantity > 0');
+    if (quantity === 0) {
+      await pool.query('DELETE FROM orders WHERE client_id=$1 AND recipient_id=$2', [client_id, recipient_id]);
+    } else {
+      await pool.query(
+        `INSERT INTO orders (client_id, recipient_id, quantity, comment, month_label)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (client_id, recipient_id)
+         DO UPDATE SET quantity=$3, comment=$4, ordered_at=NOW(), month_label=$5`,
+        [client_id, recipient_id, quantity, comment || '', ml]
+      );
+    }
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── STATS ROUTE ───────────────────────────────────────────
-app.get('/api/stats', requireAdmin, async (req, res) => {
+app.get('/api/orders/all', requireAdmin, async (req, res) => {
   try {
-    const [clients, suppliers, orders] = await Promise.all([
-      pool.query('SELECT COUNT(*) as count FROM clients'),
-      pool.query('SELECT COUNT(*) as count FROM suppliers'),
-      pool.query(`
-        SELECT o.quantity, c.id as client_id, s.name as supplier_name
-        FROM orders o
-        JOIN clients c ON c.id = o.client_id
-        JOIN suppliers s ON s.id = o.supplier_id
-        WHERE o.quantity > 0
-      `)
-    ]);
-    const totalParcels = orders.rows.reduce((s, o) => s + parseInt(o.quantity), 0);
-    const activeClients = new Set(orders.rows.map(o => o.client_id)).size;
-    const supplierTotals = {};
-    orders.rows.forEach(o => {
-      supplierTotals[o.supplier_name] = (supplierTotals[o.supplier_name] || 0) + parseInt(o.quantity);
-    });
-    res.json({
-      totalClients: parseInt(clients.rows[0].count),
-      totalSuppliers: parseInt(suppliers.rows[0].count),
-      totalParcels,
-      activeClients,
-      supplierTotals
-    });
+    const r = await pool.query(
+      `SELECT o.id, o.quantity, o.comment, o.ordered_at, o.month_label,
+              c.id as client_id, c.name as client_name,
+              rec.id as recipient_id, rec.name as recipient_name
+       FROM orders o
+       JOIN clients c ON c.id = o.client_id
+       JOIN recipients rec ON rec.id = o.recipient_id
+       WHERE o.quantity > 0
+       ORDER BY c.name, rec.name`
+    );
+    res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── ADMIN CONFIG ──────────────────────────────────────────
-app.post('/api/admin/password', requireAdmin, async (req, res) => {
-  const { newPassword } = req.body;
+// ── EXPORT & RESET ────────────────────────────────────────
+app.post('/api/orders/export', requireAdmin, async (req, res) => {
+  const client = await pool.connect();
   try {
-    await pool.query("UPDATE config SET value = $1 WHERE key = 'admin_password'", [newPassword]);
-    res.json({ success: true });
+    await client.query('BEGIN');
+
+    // Get all current orders
+    const orders = await client.query(
+      `SELECT o.*, c.name as client_name, r.name as recipient_name
+       FROM orders o
+       JOIN clients c ON c.id = o.client_id
+       JOIN recipients r ON r.id = o.recipient_id
+       WHERE o.quantity > 0`
+    );
+
+    if (orders.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.json({ rows: [], message: 'Aucune commande' });
+    }
+
+    // Move to history
+    for (const o of orders.rows) {
+      await client.query(
+        `INSERT INTO order_history (client_id, client_name, recipient_id, recipient_name, quantity, comment, ordered_at, month_label)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [o.client_id, o.client_name, o.recipient_id, o.recipient_name, o.quantity, o.comment, o.ordered_at, o.month_label]
+      );
+    }
+
+    // Delete current orders
+    await client.query('DELETE FROM orders WHERE quantity > 0');
+    await client.query('COMMIT');
+
+    res.json({ rows: orders.rows });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ── HISTORY ───────────────────────────────────────────────
+app.get('/api/history/months', requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'SELECT DISTINCT month_label FROM order_history ORDER BY month_label DESC'
+    );
+    res.json(r.rows.map(r => r.month_label));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── SERVE HTML ────────────────────────────────────────────
+app.get('/api/history/:month', async (req, res) => {
+  const isAdmin = req.headers['x-admin-token'] === 'admin-ok';
+  const clientId = req.headers['x-client-id'];
+  try {
+    let r;
+    if (isAdmin) {
+      r = await pool.query(
+        `SELECT id, client_name, recipient_name, quantity, comment, ordered_at, exported_at, month_label
+         FROM order_history WHERE month_label = $1
+         ORDER BY client_name, recipient_name`,
+        [req.params.month]
+      );
+    } else if (clientId) {
+      r = await pool.query(
+        `SELECT id, client_name, recipient_name, quantity, comment, ordered_at, exported_at, month_label
+         FROM order_history WHERE month_label = $1 AND client_id = $2
+         ORDER BY recipient_name`,
+        [req.params.month, clientId]
+      );
+    } else {
+      return res.status(401).json({ error: 'Non autorisé' });
+    }
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/history/client/:clientId/:month', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT recipient_name, quantity, comment, ordered_at
+       FROM order_history
+       WHERE client_id = $1 AND month_label = $2
+       ORDER BY recipient_name`,
+      [req.params.clientId, req.params.month]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── SERVE SPA ─────────────────────────────────────────────
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
