@@ -41,8 +41,21 @@ async function initDB() {
         address TEXT DEFAULT '',
         phone TEXT DEFAULT '',
         added_by_client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+        client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Migration: add client_id column if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='recipients' AND column_name='client_id') THEN
+          ALTER TABLE recipients ADD COLUMN client_id UUID REFERENCES clients(id) ON DELETE CASCADE;
+        END IF;
+      END $$;
+      -- Migration: create recipient for existing clients that don't have one
+      INSERT INTO recipients (name, email, address, phone, client_id)
+        SELECT c.name, c.email, c.address, c.phone, c.id
+        FROM clients c
+        WHERE NOT EXISTS (SELECT 1 FROM recipients r WHERE r.client_id = c.id)
+      ON CONFLICT DO NOTHING;
 
       CREATE TABLE IF NOT EXISTS client_recipients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -180,27 +193,51 @@ app.get('/api/clients', requireAdmin, async (req, res) => {
 
 app.post('/api/clients', requireAdmin, async (req, res) => {
   const { name, email, address, phone } = req.body;
+  const client = await pool.connect();
   try {
-    const r = await pool.query(
+    await client.query('BEGIN');
+    // Create client
+    const r = await client.query(
       "INSERT INTO clients (name, email, address, phone, password) VALUES ($1, $2, $3, $4, '1234') RETURNING id, name, email, address, phone",
       [name, email, address || '', phone || '']
     );
-    res.json(r.rows[0]);
+    const newClient = r.rows[0];
+    // Auto-create matching recipient
+    const rr = await client.query(
+      'INSERT INTO recipients (name, email, address, phone, client_id) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+      [name, email, address || '', phone || '', newClient.id]
+    );
+    await client.query('COMMIT');
+    res.json(newClient);
   } catch (e) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
 app.put('/api/clients/:id', requireAdmin, async (req, res) => {
   const { name, email, address, phone } = req.body;
+  const client = await pool.connect();
   try {
-    await pool.query(
+    await client.query('BEGIN');
+    await client.query(
       'UPDATE clients SET name=$1, email=$2, address=$3, phone=$4 WHERE id=$5',
       [name, email, address || '', phone || '', req.params.id]
     );
+    // Sync recipient
+    await client.query(
+      'UPDATE recipients SET name=$1, email=$2, address=$3, phone=$4 WHERE client_id=$5',
+      [name, email, address || '', phone || '', req.params.id]
+    );
+    await client.query('COMMIT');
     res.json({ success: true });
   } catch (e) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
   }
 });
 
@@ -246,7 +283,7 @@ app.post('/api/clients/:id/change-password', requireAdmin, async (req, res) => {
 // ── RECIPIENTS ────────────────────────────────────────────
 app.get('/api/recipients', requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query('SELECT id, name, email, address, phone FROM recipients ORDER BY name');
+    const r = await pool.query('SELECT id, name, email, address, phone, client_id FROM recipients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
