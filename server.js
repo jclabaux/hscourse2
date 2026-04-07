@@ -87,6 +87,7 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
         client_name TEXT NOT NULL,
+        client_address TEXT DEFAULT '',
         recipient_id UUID REFERENCES recipients(id) ON DELETE SET NULL,
         recipient_name TEXT NOT NULL,
         quantity INTEGER NOT NULL,
@@ -95,6 +96,12 @@ async function initDB() {
         exported_at TIMESTAMPTZ DEFAULT NOW(),
         month_label TEXT NOT NULL
       );
+      -- Migration: add client_address to history if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_history' AND column_name='client_address') THEN
+          ALTER TABLE order_history ADD COLUMN client_address TEXT DEFAULT '';
+        END IF;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS config (
         key TEXT PRIMARY KEY,
@@ -457,7 +464,7 @@ app.get('/api/orders/all', requireAdmin, async (req, res) => {
   try {
     const r = await pool.query(
       `SELECT o.id, o.quantity, o.comment, o.ordered_at, o.month_label,
-              c.id as client_id, c.name as client_name,
+              c.id as client_id, c.name as client_name, c.address as client_address,
               rec.id as recipient_id, rec.name as recipient_name
        FROM orders o
        JOIN clients c ON c.id = o.client_id
@@ -477,26 +484,32 @@ app.post('/api/orders/export', requireAdmin, async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    // Get all current orders
+    // Get all current orders with client address and recipient info
     const orders = await client.query(
-      `SELECT o.*, c.name as client_name, r.name as recipient_name
+      `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.ordered_at, o.month_label,
+              c.name as client_name, c.address as client_address,
+              r.name as recipient_name
        FROM orders o
        JOIN clients c ON c.id = o.client_id
        JOIN recipients r ON r.id = o.recipient_id
-       WHERE o.quantity > 0`
+       WHERE o.quantity > 0
+       ORDER BY c.name, r.name`
     );
 
     if (orders.rows.length === 0) {
       await client.query('ROLLBACK');
-      return res.json({ rows: [], message: 'Aucune commande' });
+      return res.json({ rows: [], allRecipients: [], message: 'Aucune commande' });
     }
+
+    // Get all recipients that appear in orders (for column headers)
+    const allRecipients = [...new Set(orders.rows.map(o => o.recipient_name))].sort();
 
     // Move to history
     for (const o of orders.rows) {
       await client.query(
-        `INSERT INTO order_history (client_id, client_name, recipient_id, recipient_name, quantity, comment, ordered_at, month_label)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-        [o.client_id, o.client_name, o.recipient_id, o.recipient_name, o.quantity, o.comment, o.ordered_at, o.month_label]
+        `INSERT INTO order_history (client_id, client_name, client_address, recipient_id, recipient_name, quantity, comment, ordered_at, month_label)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [o.client_id, o.client_name, o.client_address || '', o.recipient_id, o.recipient_name, o.quantity, o.comment, o.ordered_at, o.month_label]
       );
     }
 
@@ -504,7 +517,19 @@ app.post('/api/orders/export', requireAdmin, async (req, res) => {
     await client.query('DELETE FROM orders WHERE quantity > 0');
     await client.query('COMMIT');
 
-    res.json({ rows: orders.rows });
+    // Explicitly map to ensure field names are correct
+    const mappedRows = orders.rows.map(o => ({
+      client_id: o.client_id,
+      client_name: o.client_name,
+      client_address: o.client_address || '',
+      recipient_id: o.recipient_id,
+      recipient_name: o.recipient_name,
+      quantity: o.quantity,
+      comment: o.comment,
+      ordered_at: o.ordered_at,
+      month_label: o.month_label
+    }));
+    res.json({ rows: mappedRows, allRecipients });
   } catch (e) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: frenchError(e) });
@@ -532,14 +557,14 @@ app.get('/api/history/:month', async (req, res) => {
     let r;
     if (isAdmin) {
       r = await pool.query(
-        `SELECT id, client_name, recipient_name, quantity, comment, ordered_at, exported_at, month_label
+        `SELECT id, client_name, client_address, recipient_name, quantity, comment, ordered_at, exported_at, month_label
          FROM order_history WHERE month_label = $1
          ORDER BY client_name, recipient_name`,
         [req.params.month]
       );
     } else if (clientId) {
       r = await pool.query(
-        `SELECT id, client_name, recipient_name, quantity, comment, ordered_at, exported_at, month_label
+        `SELECT id, client_name, client_address, recipient_name, quantity, comment, ordered_at, exported_at, month_label
          FROM order_history WHERE month_label = $1 AND client_id = $2
          ORDER BY recipient_name`,
         [req.params.month, clientId]
