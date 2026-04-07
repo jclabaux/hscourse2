@@ -19,7 +19,7 @@ async function initDB() {
     await client.query(`
       CREATE TABLE IF NOT EXISTS clients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
         email TEXT NOT NULL UNIQUE,
         password TEXT NOT NULL DEFAULT '1234',
         address TEXT DEFAULT '',
@@ -27,6 +27,14 @@ async function initDB() {
         blocked BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Migration: add unique constraint on name if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'clients_name_key'
+        ) THEN
+          ALTER TABLE clients ADD CONSTRAINT clients_name_key UNIQUE (name);
+        END IF;
+      END $$;
       -- Migration: add blocked column if not exists
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='blocked') THEN
@@ -118,6 +126,26 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+function frenchError(e) {
+  const msg = e.message || '';
+  if (msg.includes('clients_name_key') || (msg.includes('unique') && msg.includes('name'))) {
+    return 'Un client avec ce nom existe déjà.';
+  }
+  if (msg.includes('clients_email_key') || (msg.includes('unique') && msg.includes('email'))) {
+    return 'Un client avec cet e-mail existe déjà.';
+  }
+  if (msg.includes('recipients') && msg.includes('unique')) {
+    return 'Ce destinataire existe déjà.';
+  }
+  if (msg.includes('violates foreign key')) {
+    return 'Impossible de supprimer : des données liées existent encore.';
+  }
+  if (msg.includes('null value') || msg.includes('not-null')) {
+    return 'Un champ obligatoire est manquant.';
+  }
+  return msg;
+}
+
 // ── AUTH ──────────────────────────────────────────────────
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body;
@@ -140,7 +168,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
     return res.status(401).json({ error: 'Identifiants incorrects' });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -153,7 +181,7 @@ app.post('/api/auth/change-password', async (req, res) => {
     await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, c.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -165,7 +193,7 @@ app.get('/api/config', async (req, res) => {
     r.rows.forEach(row => { cfg[row.key] = row.value; });
     res.json(cfg);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -177,7 +205,7 @@ app.post('/api/config', requireAdmin, async (req, res) => {
     if (admin_password) await pool.query("UPDATE config SET value = $1 WHERE key = 'admin_password'", [admin_password]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -187,7 +215,7 @@ app.get('/api/clients', requireAdmin, async (req, res) => {
     const r = await pool.query('SELECT id, name, email, address, phone, blocked, created_at FROM clients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -211,7 +239,7 @@ app.post('/api/clients', requireAdmin, async (req, res) => {
     res.json(newClient);
   } catch (e) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   } finally {
     client.release();
   }
@@ -235,7 +263,7 @@ app.put('/api/clients/:id', requireAdmin, async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   } finally {
     client.release();
   }
@@ -246,7 +274,7 @@ app.delete('/api/clients/:id', requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM clients WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -255,7 +283,7 @@ app.post('/api/clients/:id/reset-password', requireAdmin, async (req, res) => {
     await pool.query("UPDATE clients SET password = '1234' WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -265,7 +293,7 @@ app.post('/api/clients/:id/block', requireAdmin, async (req, res) => {
     await pool.query('UPDATE clients SET blocked = $1 WHERE id = $2', [blocked, req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -276,7 +304,7 @@ app.post('/api/clients/:id/change-password', requireAdmin, async (req, res) => {
     await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -286,7 +314,7 @@ app.get('/api/recipients', requireAdmin, async (req, res) => {
     const r = await pool.query('SELECT id, name, email, address, phone, client_id FROM recipients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -308,7 +336,7 @@ app.post('/api/recipients', async (req, res) => {
     }
     res.json(recipient);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -321,7 +349,7 @@ app.put('/api/recipients/:id', requireAdmin, async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -330,7 +358,7 @@ app.delete('/api/recipients/:id', requireAdmin, async (req, res) => {
     await pool.query('DELETE FROM recipients WHERE id = $1', [req.params.id]);
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -347,7 +375,7 @@ app.get('/api/clients/:id/recipients', async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -356,7 +384,7 @@ app.get('/api/assignments', requireAdmin, async (req, res) => {
     const r = await pool.query('SELECT client_id, recipient_id FROM client_recipients');
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -369,7 +397,7 @@ app.post('/api/assignments', requireAdmin, async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -382,7 +410,7 @@ app.delete('/api/assignments', requireAdmin, async (req, res) => {
     );
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -399,7 +427,7 @@ app.get('/api/orders/client/:clientId', async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -421,7 +449,7 @@ app.post('/api/orders', async (req, res) => {
     }
     res.json({ success: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -439,7 +467,7 @@ app.get('/api/orders/all', requireAdmin, async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -479,7 +507,7 @@ app.post('/api/orders/export', requireAdmin, async (req, res) => {
     res.json({ rows: orders.rows });
   } catch (e) {
     await client.query('ROLLBACK');
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   } finally {
     client.release();
   }
@@ -493,7 +521,7 @@ app.get('/api/history/months', requireAdmin, async (req, res) => {
     );
     res.json(r.rows.map(r => r.month_label));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -521,7 +549,7 @@ app.get('/api/history/:month', async (req, res) => {
     }
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
@@ -536,7 +564,7 @@ app.get('/api/history/client/:clientId/:month', async (req, res) => {
     );
     res.json(r.rows);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: frenchError(e) });
   }
 });
 
