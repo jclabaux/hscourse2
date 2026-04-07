@@ -108,6 +108,20 @@ async function initDB() {
         value TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS route_sheets (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        name TEXT NOT NULL UNIQUE,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS route_sheet_clients (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE,
+        client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+        UNIQUE(route_sheet_id, client_id)
+      );
+
       INSERT INTO config (key, value) VALUES
         ('admin_password', 'admin123'),
         ('start_hour', '6'),
@@ -590,6 +604,141 @@ app.get('/api/history/client/:clientId/:month', async (req, res) => {
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: frenchError(e) });
+  }
+});
+
+// ── ROUTE SHEETS ─────────────────────────────────────────
+app.get('/api/route-sheets', requireAdmin, async (req, res) => {
+  try {
+    const sheets = await pool.query('SELECT id, name, position FROM route_sheets ORDER BY position, name');
+    const assignments = await pool.query(
+      `SELECT rsc.route_sheet_id, rsc.client_id, c.name as client_name
+       FROM route_sheet_clients rsc
+       JOIN clients c ON c.id = rsc.client_id
+       ORDER BY c.name`
+    );
+    const result = sheets.rows.map(s => ({
+      ...s,
+      clients: assignments.rows.filter(a => a.route_sheet_id === s.id).map(a => ({ id: a.client_id, name: a.client_name }))
+    }));
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.post('/api/route-sheets', requireAdmin, async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: 'Le nom est obligatoire' });
+  try {
+    const maxPos = await pool.query('SELECT COALESCE(MAX(position),0)+1 as pos FROM route_sheets');
+    const r = await pool.query(
+      'INSERT INTO route_sheets (name, position) VALUES ($1,$2) RETURNING id, name, position',
+      [name, maxPos.rows[0].pos]
+    );
+    res.json({ ...r.rows[0], clients: [] });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.put('/api/route-sheets/:id', requireAdmin, async (req, res) => {
+  const { name } = req.body;
+  try {
+    await pool.query('UPDATE route_sheets SET name=$1 WHERE id=$2', [name, req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.delete('/api/route-sheets/:id', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM route_sheets WHERE id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
+  const { client_id } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO route_sheet_clients (route_sheet_id, client_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+      [req.params.id, client_id]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+// ── EXPORT BY ROUTE SHEET ─────────────────────────────────
+app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    // Get all orders
+    const orders = await dbClient.query(
+      `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.ordered_at, o.month_label,
+              c.name as client_name, c.address as client_address,
+              r.name as recipient_name
+       FROM orders o
+       JOIN clients c ON c.id = o.client_id
+       JOIN recipients r ON r.id = o.recipient_id
+       WHERE o.quantity > 0
+       ORDER BY c.name, r.name`
+    );
+
+    if (orders.rows.length === 0) {
+      await dbClient.query('ROLLBACK');
+      return res.json({ sheets: [], message: 'Aucune commande' });
+    }
+
+    // Get route sheets with their clients
+    const sheets = await dbClient.query('SELECT id, name FROM route_sheets ORDER BY position, name');
+    const assignments = await dbClient.query('SELECT route_sheet_id, client_id FROM route_sheet_clients');
+
+    // Build sheet -> client_ids map
+    const sheetClients = {};
+    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set() }; });
+    assignments.rows.forEach(a => { if (sheetClients[a.route_sheet_id]) sheetClients[a.route_sheet_id].clientIds.add(a.client_id); });
+
+    // Assigned client IDs
+    const assignedClientIds = new Set(assignments.rows.map(a => a.client_id));
+
+    // Group orders by sheet
+    const result = [];
+    for (const [sheetId, sheet] of Object.entries(sheetClients)) {
+      const sheetOrders = orders.rows.filter(o => sheet.clientIds.has(o.client_id));
+      result.push({ name: sheet.name, rows: sheetOrders });
+    }
+
+    // "Autres" — clients with orders but not in any sheet
+    const othersOrders = orders.rows.filter(o => !assignedClientIds.has(o.client_id));
+    if (othersOrders.length > 0) {
+      result.push({ name: 'Autres', rows: othersOrders });
+    }
+
+    // Move all to history & delete
+    for (const o of orders.rows) {
+      await dbClient.query(
+        `INSERT INTO order_history (client_id, client_name, client_address, recipient_id, recipient_name, quantity, comment, ordered_at, month_label)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [o.client_id, o.client_name, o.client_address || '', o.recipient_id, o.recipient_name, o.quantity, o.comment, o.ordered_at, o.month_label]
+      );
+    }
+    await dbClient.query('DELETE FROM orders WHERE quantity > 0');
+    await dbClient.query('COMMIT');
+
+    res.json({ sheets: result });
+  } catch(e) {
+    await dbClient.query('ROLLBACK');
+    res.status(500).json({ error: frenchError(e) });
+  } finally {
+    dbClient.release();
   }
 });
 

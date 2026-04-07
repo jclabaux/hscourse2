@@ -285,11 +285,13 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
         <button class="tab active" onclick="showAdminTab('orders')">Commandes</button>
         <button class="tab" onclick="showAdminTab('history')">Historique</button>
         <button class="tab" onclick="showAdminTab('clients')">Clients</button>
+        <button class="tab" onclick="showAdminTab('routes')">Feuilles de route</button>
         <button class="tab" onclick="showAdminTab('settings')">Paramètres</button>
       </div>
       <div id="tab-orders"></div>
       <div id="tab-history" style="display:none;"></div>
       <div id="tab-clients" style="display:none;"></div>
+      <div id="tab-routes" style="display:none;"></div>
       <div id="tab-settings" style="display:none;"></div>
     </div>
   </div>
@@ -705,24 +707,7 @@ async function exportOrders() {
           byClient[o.client_name].recipients[o.recipient_name] = o.quantity;
         });
 
-        // Header: Client, Ville, Nb de passage (no recipient names)
-        // Max number of recipients across all clients
-        const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
-        const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-        const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
-        const rows = [header];
-
-        Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
-          // List recipient names (no quantity) in order
-          const recipNames = Object.entries(info.recipients)
-            .sort((a,b) => a[0].localeCompare(b[0]))
-            .map(([name]) => name);
-          // Pad to maxRecip columns
-          while (recipNames.length < maxRecip) recipNames.push('');
-          const row = [clientName, info.address, info.totalQty, ...recipNames];
-          rows.push(row);
-        });
-
+        const rows = buildExportRows(data.rows);
         downloadCSV(rows, 'commandes_' + new Date().toLocaleDateString('fr-FR').replace(/\//g, '-'));
         toast('✓ Export téléchargé — commandes réinitialisées');
         renderAdminOrders();
@@ -982,6 +967,168 @@ async function deleteClient(id, name) {
 
 // ── ADMIN RECIPIENTS TAB ──────────────────────────────────
 // ── ADMIN SETTINGS TAB ────────────────────────────────────
+async function renderRouteSheets() {
+  const el = document.getElementById('tab-routes');
+  el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
+  try {
+    const [sheets, clients] = await Promise.all([api('route-sheets'), api('clients')]);
+    let html = `<div style="margin-bottom:16px;display:flex;justify-content:flex-end;">
+      <button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>
+    </div>`;
+    if (sheets.length === 0) {
+      html += '<div class="empty"><div class="empty-icon">🗺️</div><p>Aucune feuille de route.<br>Créez-en une pour segmenter vos exports.</p></div>';
+    } else {
+      sheets.forEach(sheet => {
+        const unassigned = clients.filter(c => !sheet.clients.find(sc => sc.id === c.id));
+        html += `<div class="card" style="margin-bottom:16px;">
+          <div class="card-header">
+            <div class="card-title">🗺️ ${sheet.name}</div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-secondary btn-sm" onclick="showEditRouteSheetModal('${sheet.id}','${esc(sheet.name)}')">✏️</button>
+              <button class="btn btn-danger btn-sm" onclick="deleteRouteSheet('${sheet.id}','${esc(sheet.name)}')">🗑️</button>
+            </div>
+          </div>
+          <div class="card-body" style="padding:12px 16px;">
+            <div style="margin-bottom:10px;">
+              <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:8px;">
+                Clients assignés (${sheet.clients.length})
+              </div>
+              ${sheet.clients.length === 0
+                ? '<p style="font-size:13px;color:var(--ink2);font-style:italic;">Aucun client assigné</p>'
+                : sheet.clients.map(c => `
+                  <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 10px;background:var(--blue-light);border-radius:var(--radius-sm);margin-bottom:6px;">
+                    <span style="font-size:14px;font-weight:500;color:var(--blue);">${c.name}</span>
+                    <button onclick="removeClientFromSheet('${sheet.id}','${c.id}')" style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:16px;padding:0;">×</button>
+                  </div>`).join('')
+              }
+            </div>
+            ${unassigned.length > 0 ? `
+            <div>
+              <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:8px;">Ajouter un client</div>
+              <div style="display:flex;gap:8px;">
+                <select id="add-client-${sheet.id}" style="flex:1;padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:'Epilogue',sans-serif;font-size:14px;background:var(--surface);">
+                  <option value="">— Choisir un client —</option>
+                  ${unassigned.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="addClientToSheet('${sheet.id}')">Ajouter</button>
+              </div>
+            </div>` : '<p style="font-size:13px;color:var(--ink2);">Tous les clients sont assignés à cette feuille.</p>'}
+          </div>
+        </div>`;
+      });
+    }
+    el.innerHTML = html;
+  } catch(e) { el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
+}
+
+function showAddRouteSheetModal() {
+  openModal('Nouvelle feuille de route', `
+    <div class="form-group"><label>Nom *</label><input type="text" id="rs-name" placeholder="Ex: Zone Nord, Tournée du mardi…"></div>
+  `, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Créer', cls: 'btn-primary', action: async () => {
+      const name = document.getElementById('rs-name').value.trim();
+      if (!name) { toast('⚠️ Le nom est obligatoire'); return; }
+      try {
+        await api('route-sheets', { method: 'POST', body: { name } });
+        closeModal(); toast('✓ Feuille de route créée'); renderRouteSheets();
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+function showEditRouteSheetModal(id, name) {
+  openModal('Renommer la feuille de route', `
+    <div class="form-group"><label>Nom *</label><input type="text" id="rs-edit-name" value="${name}"></div>
+  `, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Enregistrer', cls: 'btn-primary', action: async () => {
+      const newName = document.getElementById('rs-edit-name').value.trim();
+      if (!newName) { toast('⚠️ Le nom est obligatoire'); return; }
+      try {
+        await api('route-sheets/' + id, { method: 'PUT', body: { name: newName } });
+        closeModal(); toast('✓ Feuille de route renommée'); renderRouteSheets();
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+async function deleteRouteSheet(id, name) {
+  openModal('Supprimer la feuille de route', 'Supprimer <strong>' + name + '</strong> ? Les clients ne seront pas supprimés.', [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Supprimer', cls: 'btn-danger', action: async () => {
+      try {
+        await api('route-sheets/' + id, { method: 'DELETE' });
+        closeModal(); toast('✓ Feuille de route supprimée'); renderRouteSheets();
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+async function addClientToSheet(sheetId) {
+  const sel = document.getElementById('add-client-' + sheetId);
+  const clientId = sel.value;
+  if (!clientId) { toast('⚠️ Choisissez un client'); return; }
+  try {
+    await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId } });
+    toast('✓ Client ajouté'); renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function removeClientFromSheet(sheetId, clientId) {
+  try {
+    await api('route-sheets/' + sheetId + '/clients/' + clientId, { method: 'DELETE' });
+    toast('✓ Client retiré'); renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function exportByRoute() {
+  openModal('Export par feuille de route', `
+    Cette action va :<br><br>
+    • Générer <strong>un fichier Excel par feuille de route</strong><br>
+    • Les clients non assignés seront exportés dans un fichier <strong>"Autres"</strong><br>
+    • Remettre toutes les quantités à zéro<br>
+    • Archiver les commandes dans l'historique<br><br>
+    <strong>Cette action est irréversible. Confirmer ?</strong>
+  `, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Exporter', cls: 'btn-success', action: async () => {
+      closeModal();
+      try {
+        const data = await api('orders/export-by-route', { method: 'POST' });
+        if (!data.sheets || data.sheets.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
+        let exported = 0;
+        data.sheets.forEach(sheet => {
+          if (!sheet.rows || sheet.rows.length === 0) return;
+          const csvRows = buildExportRows(sheet.rows);
+          downloadCSV(csvRows, 'commandes_' + sheet.name.replace(/[^a-zA-Z0-9]/g, '_') + '_' + new Date().toLocaleDateString('fr-FR').replace(/\//g, '-'));
+          exported++;
+        });
+        toast('✓ ' + exported + ' fichier' + (exported > 1 ? 's' : '') + ' exporté' + (exported > 1 ? 's' : '') + ' — commandes réinitialisées');
+        renderAdminOrders();
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+function buildExportRows(rows) {
+  const byClient = {};
+  rows.forEach(o => {
+    if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
+    byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
+    byClient[o.client_name].recipients[o.recipient_name] = o.quantity;
+  });
+  const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
+  const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
+  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
+  Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
+    const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
+    while (recipNames.length < maxRecip) recipNames.push('');
+    csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
+  });
+  return csvRows;
+}
+
 async function renderAdminSettings() {
   const el = document.getElementById('tab-settings');
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
@@ -1031,14 +1178,15 @@ async function saveAdminPwd() {
 function showAdminTab(tab) {
   activeAdminTab = tab;
   document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', ['orders','history','clients','settings'][i] === tab);
+    t.classList.toggle('active', ['orders','history','clients','routes','settings'][i] === tab);
   });
-  ['orders','history','clients','settings'].forEach(t => {
+  ['orders','history','clients','routes','settings'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
   });
   if (tab === 'orders') renderAdminOrders();
   else if (tab === 'history') renderAdminHistory();
   else if (tab === 'clients') renderAdminClients();
+  else if (tab === 'routes') renderRouteSheets();
   else if (tab === 'settings') renderAdminSettings();
 }
 
