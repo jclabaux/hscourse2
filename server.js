@@ -24,8 +24,15 @@ async function initDB() {
         password TEXT NOT NULL DEFAULT '1234',
         address TEXT DEFAULT '',
         phone TEXT DEFAULT '',
+        blocked BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Migration: add blocked column if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='blocked') THEN
+          ALTER TABLE clients ADD COLUMN blocked BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS recipients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -110,11 +117,12 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
     const r = await pool.query(
-      'SELECT id, name, email, password, address, phone FROM clients WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, name, email, password, address, phone, blocked FROM clients WHERE LOWER(email) = LOWER($1)',
       [email.trim()]
     );
     const c = r.rows[0];
     if (c && c.password === password) {
+      if (c.blocked) return res.status(403).json({ error: 'Compte bloqué. Contactez votre administrateur.' });
       return res.json({ role: 'client', id: c.id, name: c.name, email: c.email, address: c.address, phone: c.phone });
     }
     return res.status(401).json({ error: 'Identifiants incorrects' });
@@ -163,7 +171,7 @@ app.post('/api/config', requireAdmin, async (req, res) => {
 // ── CLIENTS ───────────────────────────────────────────────
 app.get('/api/clients', requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query('SELECT id, name, email, address, phone, created_at FROM clients ORDER BY name');
+    const r = await pool.query('SELECT id, name, email, address, phone, blocked, created_at FROM clients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -208,6 +216,27 @@ app.delete('/api/clients/:id', requireAdmin, async (req, res) => {
 app.post('/api/clients/:id/reset-password', requireAdmin, async (req, res) => {
   try {
     await pool.query("UPDATE clients SET password = '1234' WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/clients/:id/block', requireAdmin, async (req, res) => {
+  const { blocked } = req.body;
+  try {
+    await pool.query('UPDATE clients SET blocked = $1 WHERE id = $2', [blocked, req.params.id]);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/clients/:id/change-password', requireAdmin, async (req, res) => {
+  const { newPassword } = req.body;
+  if (!newPassword || newPassword.length < 3) return res.status(400).json({ error: 'Mot de passe trop court' });
+  try {
+    await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, req.params.id]);
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });

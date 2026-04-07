@@ -255,6 +255,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
     <div class="nav-brand">HS <span>Courses</span></div>
     <div class="nav-right">
       <span class="nav-user" id="nav-user"></span>
+      <button class="nav-logout" id="nav-changepwd-btn" onclick="showClientChangePwdModal()" style="display:none;">🔑 Mot de passe</button>
       <button class="nav-logout" onclick="doLogout()">Déconnexion</button>
     </div>
   </nav>
@@ -360,10 +361,11 @@ async function doLogin() {
       renderAdminOrders();
     } else {
       document.getElementById('client-view').style.display = 'block';
+      document.getElementById('nav-changepwd-btn').style.display = '';
       await initClientView();
     }
   } catch(e) {
-    errEl.textContent = e.message === 'Identifiants incorrects' ? 'Identifiants incorrects.' : 'Erreur de connexion.';
+    errEl.textContent = e.message === 'Identifiants incorrects' ? 'Identifiants incorrects.' : e.message.includes('bloqué') ? e.message : 'Erreur de connexion.';
     errEl.classList.add('show');
   } finally {
     btn.disabled = false; btn.textContent = 'Se connecter';
@@ -396,6 +398,27 @@ function showChangePwdModal() {
       if (!newP || newP.length < 3) { toast('⚠️ Mot de passe trop court'); return; }
       try {
         await api('auth/change-password', { method: 'POST', body: { email: em, oldPassword: oldP, newPassword: newP } });
+        closeModal(); toast('✓ Mot de passe modifié');
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+function showClientChangePwdModal() {
+  openModal('Modifier mon mot de passe', `
+    <div class="form-group"><label>Ancien mot de passe</label><input type="password" id="ccp-old" placeholder="••••••••"></div>
+    <div class="form-group"><label>Nouveau mot de passe</label><input type="password" id="ccp-new" placeholder="••••••••"></div>
+    <div class="form-group"><label>Confirmer le nouveau mot de passe</label><input type="password" id="ccp-confirm" placeholder="••••••••"></div>
+  `, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Modifier', cls: 'btn-primary', action: async () => {
+      const oldP = document.getElementById('ccp-old').value;
+      const newP = document.getElementById('ccp-new').value;
+      const confirm = document.getElementById('ccp-confirm').value;
+      if (!newP || newP.length < 3) { toast('⚠️ Mot de passe trop court (min 3 caractères)'); return; }
+      if (newP !== confirm) { toast('⚠️ Les mots de passe ne correspondent pas'); return; }
+      try {
+        await api('auth/change-password', { method: 'POST', body: { email: currentUser.email, oldPassword: oldP, newPassword: newP } });
         closeModal(); toast('✓ Mot de passe modifié');
       } catch(e) { toast('❌ ' + e.message); }
     }}
@@ -487,7 +510,7 @@ async function renderClientRecipients() {
           clickTimer = null;
           if (!isWindowOpen) { toast('⚠️ La saisie est fermée pour le moment'); return; }
           toggleSelect(r.id);
-        }, 220);
+        }, 400);
       });
 
       // Double click = expand detail
@@ -783,14 +806,16 @@ async function renderAdminClients() {
       html += '<div class="card"><table class="manage-table"><thead><tr><th>Nom</th><th>Email</th><th class="hide-mobile">Téléphone</th><th>Actions</th></tr></thead><tbody>';
       clients.forEach(c => {
         const assignedCount = assignments.filter(a => a.client_id === c.id).length;
-        html += `<tr>
-          <td><div style="font-weight:600;">${c.name}</div><div style="font-size:12px;color:var(--ink2);">${assignedCount} destinataire${assignedCount !== 1 ? 's' : ''}</div></td>
+        const blockedBadge = c.blocked ? '<span class="badge" style="background:#fee2e2;color:#dc2626;margin-left:6px;">Bloqué</span>' : '';
+        html += `<tr style="${c.blocked ? 'opacity:0.6;' : ''}">
+          <td><div style="font-weight:600;">${c.name}${blockedBadge}</div><div style="font-size:12px;color:var(--ink2);">${assignedCount} destinataire${assignedCount !== 1 ? 's' : ''}</div></td>
           <td style="font-size:13px;">${c.email}</td>
           <td class="hide-mobile" style="font-size:13px;">${c.phone || '—'}</td>
           <td><div style="display:flex;gap:6px;flex-wrap:wrap;">
             <button class="btn btn-secondary btn-sm" onclick="showEditClientModal('${c.id}','${esc(c.name)}','${esc(c.email)}','${esc(c.address||'')}','${esc(c.phone||'')}')">✏️</button>
             <button class="btn btn-secondary btn-sm" onclick="showAssignModal('${c.id}','${esc(c.name)}')">🔗</button>
-            <button class="btn btn-secondary btn-sm" onclick="resetClientPwd('${c.id}','${esc(c.name)}')">🔑</button>
+            <button class="btn btn-secondary btn-sm" onclick="showAdminChangePwdModal('${c.id}','${esc(c.name)}')">🔑</button>
+            <button class="btn ${c.blocked ? 'btn-success' : 'btn-danger'} btn-sm" onclick="toggleBlock('${c.id}','${esc(c.name)}',${!c.blocked})">${c.blocked ? '🔓 Débloquer' : '🚫 Bloquer'}</button>
             <button class="btn btn-danger btn-sm" onclick="deleteClient('${c.id}','${esc(c.name)}')">🗑️</button>
           </div></td>
         </tr>`;
@@ -874,6 +899,43 @@ async function resetClientPwd(id, name) {
     { label: 'Réinitialiser', cls: 'btn-danger', action: async () => {
       try { await api('clients/' + id + '/reset-password', { method: 'POST' }); closeModal(); toast('✓ Mot de passe réinitialisé à 1234'); }
       catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+function showAdminChangePwdModal(id, name) {
+  openModal('Modifier le mot de passe de ' + name, `
+    <div class="form-group"><label>Nouveau mot de passe</label><input type="password" id="acp-new" placeholder="••••••••"></div>
+    <div class="form-group"><label>Confirmer</label><input type="password" id="acp-confirm" placeholder="••••••••"></div>
+  `, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: 'Modifier', cls: 'btn-primary', action: async () => {
+      const newP = document.getElementById('acp-new').value;
+      const confirm = document.getElementById('acp-confirm').value;
+      if (!newP || newP.length < 3) { toast('⚠️ Mot de passe trop court'); return; }
+      if (newP !== confirm) { toast('⚠️ Les mots de passe ne correspondent pas'); return; }
+      try {
+        await api('clients/' + id + '/change-password', { method: 'POST', body: { newPassword: newP } });
+        closeModal(); toast('✓ Mot de passe modifié');
+      } catch(e) { toast('❌ ' + e.message); }
+    }}
+  ]);
+}
+
+async function toggleBlock(id, name, block) {
+  const action = block ? 'Bloquer' : 'Débloquer';
+  const msg = block
+    ? 'Bloquer <strong>' + name + '</strong> ? Ce client ne pourra plus se connecter.'
+    : 'Débloquer <strong>' + name + '</strong> ? Ce client pourra à nouveau se connecter.';
+  openModal(action + ' le client', msg, [
+    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+    { label: action, cls: block ? 'btn-danger' : 'btn-success', action: async () => {
+      try {
+        await api('clients/' + id + '/block', { method: 'POST', body: { blocked: block } });
+        closeModal();
+        toast('✓ Client ' + (block ? 'bloqué' : 'débloqué'));
+        renderAdminClients();
+      } catch(e) { toast('❌ ' + e.message); }
     }}
   ]);
 }
