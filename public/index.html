@@ -268,7 +268,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
         <span id="time-banner-text"></span>
       </div>
       <div class="page-header">
-        <div class="page-title" id="client-title">Mes commandes</div>
+        <div class="page-title" id="client-title">Mes destinataires</div>
         <div class="page-actions">
           <button class="btn btn-secondary btn-sm" onclick="showHistoryModal()">📋 Historique</button>
         </div>
@@ -688,10 +688,41 @@ async function exportOrders() {
       try {
         const data = await api('orders/export', { method: 'POST' });
         if (!data.rows || data.rows.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
-        const rows = [['Client', 'Destinataire', 'Quantité', 'Commentaire', 'Date commande']];
+
+        const allRecipients = data.allRecipients || [];
+
+        // Build one row per client
+        const byClient = {};
         data.rows.forEach(o => {
-          rows.push([o.client_name, o.recipient_name, o.quantity, o.comment || '', o.ordered_at ? new Date(o.ordered_at).toLocaleDateString('fr-FR') : '']);
+          if (!byClient[o.client_name]) {
+            byClient[o.client_name] = {
+              address: o.client_address || '',
+              totalQty: 0,
+              recipients: {}
+            };
+          }
+          byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
+          byClient[o.client_name].recipients[o.recipient_name] = o.quantity;
         });
+
+        // Header: Client, Ville, Nb de passage (no recipient names)
+        // Max number of recipients across all clients
+        const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
+        const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
+        const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
+        const rows = [header];
+
+        Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
+          // List recipient names (no quantity) in order
+          const recipNames = Object.entries(info.recipients)
+            .sort((a,b) => a[0].localeCompare(b[0]))
+            .map(([name]) => name);
+          // Pad to maxRecip columns
+          while (recipNames.length < maxRecip) recipNames.push('');
+          const row = [clientName, info.address, info.totalQty, ...recipNames];
+          rows.push(row);
+        });
+
         downloadCSV(rows, 'commandes_' + new Date().toLocaleDateString('fr-FR').replace(/\//g, '-'));
         toast('✓ Export téléchargé — commandes réinitialisées');
         renderAdminOrders();
@@ -757,12 +788,32 @@ async function exportHistoryMonth(month) {
   try {
     const rows = await api('history/' + month);
     if (rows.length === 0) { toast('⚠️ Aucune donnée à exporter'); return; }
-    const csvRows = [['Client', 'Destinataire', 'Quantité', 'Commentaire', 'Date commande', 'Date export']];
+
+    // Get all unique recipients for this month
+    const allRecipients = [...new Set(rows.map(r => r.recipient_name))].sort();
+
+    // Build one row per client
+    const byClient = {};
     rows.forEach(r => {
-      csvRows.push([r.client_name, r.recipient_name, r.quantity, r.comment || '',
-        r.ordered_at ? new Date(r.ordered_at).toLocaleDateString('fr-FR') : '',
-        r.exported_at ? new Date(r.exported_at).toLocaleDateString('fr-FR') : '']);
+      if (!byClient[r.client_name]) {
+        byClient[r.client_name] = { address: r.client_address || '', totalQty: 0, recipients: {} };
+      }
+      byClient[r.client_name].totalQty += parseInt(r.quantity) || 0;
+      byClient[r.client_name].recipients[r.recipient_name] = r.quantity;
     });
+
+    const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
+    const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
+    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
+    const csvRows = [header];
+    Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
+      const recipNames = Object.entries(info.recipients)
+        .sort((a,b) => a[0].localeCompare(b[0]))
+        .map(([name]) => name);
+      while (recipNames.length < maxRecip) recipNames.push('');
+      csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
+    });
+
     downloadCSV(csvRows, 'historique_' + month);
     toast('✓ Export téléchargé');
   } catch(e) { toast('❌ ' + e.message); }
