@@ -298,7 +298,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
 </div>
 
 <!-- MODALS -->
-<div id="modal-overlay" class="modal-overlay" onclick="closeModal(event)">
+<div id="modal-overlay" class="modal-overlay" onclick="onOverlayClick(event)">
   <div class="modal" id="modal-box">
     <div class="modal-title" id="modal-title"></div>
     <div id="modal-body"></div>
@@ -476,9 +476,7 @@ async function renderClientRecipients() {
           <div class="detail-label">Commentaire</div>
           <textarea class="comment-input" id="comment-${r.id.replace(/-/g,'')}" placeholder="Informations complémentaires…" onchange="setComment('${r.id}', this.value)">${o.comment || ''}</textarea>
         </div>
-        <div class="detail-save">
-          <button class="btn btn-primary btn-sm" onclick="saveOrder('${r.id}')">✓ Enregistrer</button>
-        </div>`;
+`;
 
       // Single click = select/deselect
       let clickTimer = null;
@@ -557,6 +555,7 @@ function adjustQty(recipientId, delta) {
   document.getElementById('badge-' + key).textContent = o.qty;
   const rowEl = document.getElementById('row-' + key);
   if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
+  saveOrder(recipientId, true);
 }
 
 function setQtyInput(recipientId, val) {
@@ -567,11 +566,13 @@ function setQtyInput(recipientId, val) {
   document.getElementById('badge-' + key).textContent = o.qty;
   const rowEl = document.getElementById('row-' + key);
   if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
+  saveOrder(recipientId, true);
 }
 
 function setComment(recipientId, val) {
   if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
   recipientOrders[recipientId].comment = val;
+  saveOrder(recipientId, true);
 }
 
 async function saveOrder(recipientId, silent = false) {
@@ -1056,9 +1057,11 @@ function openModal(title, bodyHtml, buttons) {
   document.getElementById('modal-overlay').classList.add('open');
 }
 
-function closeModal(e) {
-  if (e && e.target !== document.getElementById('modal-overlay')) return;
+function closeModal() {
   document.getElementById('modal-overlay').classList.remove('open');
+}
+function onOverlayClick(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
 }
 
 function toast(msg) {
