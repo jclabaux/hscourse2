@@ -338,17 +338,18 @@ app.get('/api/orders/client/:clientId', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
-  const { client_id, recipient_id, quantity, comment } = req.body;
+  const { client_id, recipient_id, comment } = req.body;
+  const quantity = parseInt(req.body.quantity) || 0;
   const ml = monthLabel();
   try {
-    if (quantity === 0) {
+    if (quantity <= 0) {
       await pool.query('DELETE FROM orders WHERE client_id=$1 AND recipient_id=$2', [client_id, recipient_id]);
     } else {
       await pool.query(
         `INSERT INTO orders (client_id, recipient_id, quantity, comment, month_label)
          VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (client_id, recipient_id)
-         DO UPDATE SET quantity=$3, comment=$4, ordered_at=NOW(), month_label=$5`,
+         DO UPDATE SET quantity=EXCLUDED.quantity, comment=EXCLUDED.comment, ordered_at=NOW(), month_label=EXCLUDED.month_label`,
         [client_id, recipient_id, quantity, comment || '', ml]
       );
     }
