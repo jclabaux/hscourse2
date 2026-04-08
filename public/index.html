@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>HS Courses — Gestion des Colis</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Epilogue:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root {
   --bg: #f0f2f5;
@@ -708,7 +709,12 @@ async function exportOrders() {
         });
 
         const rows = buildExportRows(data.rows);
-        downloadCSV(rows, 'commandes_' + new Date().toLocaleDateString('fr-FR').replace(/\//g, '-'));
+        const dateStr = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = rows[0].map((_, ci) => ({ wch: Math.max(...rows.map(r => String(r[ci] || '').length), 10) }));
+        XLSX.utils.book_append_sheet(wb, ws, 'Commandes');
+        XLSX.writeFile(wb, 'commandes_' + dateStr + '.xlsx');
         toast('✓ Export téléchargé — commandes réinitialisées');
         renderAdminOrders();
       } catch(e) { toast('❌ ' + e.message); }
@@ -799,7 +805,11 @@ async function exportHistoryMonth(month) {
       csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
     });
 
-    downloadCSV(csvRows, 'historique_' + month);
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(csvRows);
+    ws['!cols'] = csvRows[0].map((_, ci) => ({ wch: Math.max(...csvRows.map(r => String(r[ci] || '').length), 10) }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Historique');
+    XLSX.writeFile(wb, 'historique_' + month + '.xlsx');
     toast('✓ Export téléchargé');
   } catch(e) { toast('❌ ' + e.message); }
 }
@@ -1099,15 +1109,23 @@ async function exportByRoute() {
         if (!data.sheets || data.sheets.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
         const sheetsWithData = data.sheets.filter(s => s.rows && s.rows.length > 0);
         if (sheetsWithData.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
-        // Trigger downloads with delay to avoid browser blocking multiple downloads
         const dateStr = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
-        for (let i = 0; i < sheetsWithData.length; i++) {
-          await new Promise(resolve => setTimeout(resolve, i === 0 ? 0 : 800));
-          const sheet = sheetsWithData[i];
+        // Create one Excel workbook with one sheet per feuille de route
+        const wb = XLSX.utils.book_new();
+        sheetsWithData.forEach(sheet => {
           const csvRows = buildExportRows(sheet.rows);
-          downloadCSV(csvRows, 'commandes_' + sheet.name.replace(/[^a-zA-Z0-9àâäéèêëîïôùûü]/gi, '_') + '_' + dateStr);
-        }
-        toast('✓ ' + sheetsWithData.length + ' fichier' + (sheetsWithData.length > 1 ? 's' : '') + ' exporté' + (sheetsWithData.length > 1 ? 's' : '') + ' — commandes réinitialisées');
+          const ws = XLSX.utils.aoa_to_sheet(csvRows);
+          // Auto column width
+          const colWidths = csvRows[0].map((_, ci) => ({
+            wch: Math.max(...csvRows.map(r => String(r[ci] || '').length), 10)
+          }));
+          ws['!cols'] = colWidths;
+          // Sheet name max 31 chars (Excel limit), strip invalid chars
+          const sheetName = sheet.name.replace(/[:\/?*\[\]]/g, '').substring(0, 31);
+          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        });
+        XLSX.writeFile(wb, 'commandes_' + dateStr + '.xlsx');
+        toast('✓ Export téléchargé (' + sheetsWithData.length + ' feuille' + (sheetsWithData.length > 1 ? 's' : '') + ') — commandes réinitialisées');
         renderAdminOrders();
       } catch(e) { toast('❌ ' + e.message); }
     }}
