@@ -1097,14 +1097,17 @@ async function exportByRoute() {
       try {
         const data = await api('orders/export-by-route', { method: 'POST' });
         if (!data.sheets || data.sheets.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
-        let exported = 0;
-        data.sheets.forEach(sheet => {
-          if (!sheet.rows || sheet.rows.length === 0) return;
+        const sheetsWithData = data.sheets.filter(s => s.rows && s.rows.length > 0);
+        if (sheetsWithData.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
+        // Trigger downloads with delay to avoid browser blocking multiple downloads
+        const dateStr = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
+        for (let i = 0; i < sheetsWithData.length; i++) {
+          await new Promise(resolve => setTimeout(resolve, i === 0 ? 0 : 800));
+          const sheet = sheetsWithData[i];
           const csvRows = buildExportRows(sheet.rows);
-          downloadCSV(csvRows, 'commandes_' + sheet.name.replace(/[^a-zA-Z0-9]/g, '_') + '_' + new Date().toLocaleDateString('fr-FR').replace(/\//g, '-'));
-          exported++;
-        });
-        toast('✓ ' + exported + ' fichier' + (exported > 1 ? 's' : '') + ' exporté' + (exported > 1 ? 's' : '') + ' — commandes réinitialisées');
+          downloadCSV(csvRows, 'commandes_' + sheet.name.replace(/[^a-zA-Z0-9àâäéèêëîïôùûü]/gi, '_') + '_' + dateStr);
+        }
+        toast('✓ ' + sheetsWithData.length + ' fichier' + (sheetsWithData.length > 1 ? 's' : '') + ' exporté' + (sheetsWithData.length > 1 ? 's' : '') + ' — commandes réinitialisées');
         renderAdminOrders();
       } catch(e) { toast('❌ ' + e.message); }
     }}
