@@ -661,9 +661,8 @@ async function renderAdminOrders() {
     if (orders.length === 0) {
       html += '<div class="empty"><div class="empty-icon">📭</div><p>Aucune commande en cours</p></div>';
     } else {
-      html += '<div style="margin-bottom:16px;display:flex;gap:10px;">';
-      html += '<button class="btn btn-success" style="flex:1;" onclick="exportOrders()">📊 Export global</button>';
-      html += '<button class="btn btn-success" style="flex:1;" onclick="exportByRoute()">📋 Export par feuille de route</button>';
+      html += '<div style="margin-bottom:16px;">';
+      html += '<button class="btn btn-success" style="width:100%;" onclick="exportByRoute()">📋 Export par feuille de route</button>';
       html += '</div>';
       html += '<div class="card">';
       Object.values(byClient).forEach(({ name, orders: ords }) => {
@@ -682,46 +681,6 @@ async function renderAdminOrders() {
   } catch(e) {
     el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>';
   }
-}
-
-async function exportOrders() {
-  openModal('Confirmer l\'export', 'Cette action va :<br><br>• Télécharger les commandes en cours au format Excel<br>• Remettre toutes les quantités à zéro<br>• Archiver les commandes dans l\'historique<br><br><strong>Cette action est irréversible. Confirmer ?</strong>', [
-    { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
-    { label: 'Exporter', cls: 'btn-success', action: async () => {
-      closeModal();
-      try {
-        const data = await api('orders/export', { method: 'POST' });
-        if (!data.rows || data.rows.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
-
-        const allRecipients = data.allRecipients || [];
-
-        // Build one row per client
-        const byClient = {};
-        data.rows.forEach(o => {
-          if (!byClient[o.client_name]) {
-            byClient[o.client_name] = {
-              address: o.client_address || '',
-              totalQty: 0,
-              recipients: {}
-            };
-          }
-          byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
-          byClient[o.client_name].recipients[o.recipient_name] = o.quantity;
-        });
-
-        const rows = buildExportRows(data.rows);
-        const dateStr = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
-        const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws['!cols'] = rows[0].map((_, ci) => ({ wch: Math.max(...rows.map(r => String(r[ci] || '').length), 10) }));
-        XLSX.utils.book_append_sheet(wb, ws, 'Commandes');
-        XLSX.writeFile(wb, 'commandes_' + dateStr + '.xlsx');
-        toast('✓ Export téléchargé — commandes réinitialisées');
-        renderAdminOrders();
-      } catch(e) { toast('❌ ' + e.message); }
-    }}
-  ]);
-  document.getElementById('modal-body').innerHTML = document.getElementById('modal-body').innerHTML;
 }
 
 // ── ADMIN HISTORY TAB ─────────────────────────────────────
