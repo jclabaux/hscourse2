@@ -661,8 +661,9 @@ async function renderAdminOrders() {
     if (orders.length === 0) {
       html += '<div class="empty"><div class="empty-icon">📭</div><p>Aucune commande en cours</p></div>';
     } else {
-      html += '<div style="margin-bottom:16px;display:flex;gap:10px;justify-content:flex-end;">';
-      html += '<button class="btn btn-success btn-sm" onclick="exportOrders()">📊 Exporter et réinitialiser</button>';
+      html += '<div style="margin-bottom:16px;display:flex;gap:10px;">';
+      html += '<button class="btn btn-success" style="flex:1;" onclick="exportOrders()">📊 Export global</button>';
+      html += '<button class="btn btn-success" style="flex:1;" onclick="exportByRoute()">📋 Export par feuille de route</button>';
       html += '</div>';
       html += '<div class="card">';
       Object.values(byClient).forEach(({ name, orders: ords }) => {
