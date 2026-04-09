@@ -122,6 +122,14 @@ async function initDB() {
         UNIQUE(route_sheet_id, client_id)
       );
 
+      CREATE TABLE IF NOT EXISTS route_sheet_client_recipients (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE,
+        client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+        recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
+        UNIQUE(route_sheet_id, client_id, recipient_id)
+      );
+
       INSERT INTO config (key, value) VALUES
         ('admin_password', 'admin123'),
         ('start_hour', '6'),
@@ -617,9 +625,23 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
        JOIN clients c ON c.id = rsc.client_id
        ORDER BY c.name`
     );
+    const recipientAssignments = await pool.query(
+      `SELECT rscr.route_sheet_id, rscr.client_id, rscr.recipient_id, r.name as recipient_name
+       FROM route_sheet_client_recipients rscr
+       JOIN recipients r ON r.id = rscr.recipient_id
+       ORDER BY r.name`
+    );
     const result = sheets.rows.map(s => ({
       ...s,
-      clients: assignments.rows.filter(a => a.route_sheet_id === s.id).map(a => ({ id: a.client_id, name: a.client_name }))
+      clients: assignments.rows
+        .filter(a => a.route_sheet_id === s.id)
+        .map(a => ({
+          id: a.client_id,
+          name: a.client_name,
+          recipients: recipientAssignments.rows
+            .filter(r => r.route_sheet_id === s.id && r.client_id === a.client_id)
+            .map(r => ({ id: r.recipient_id, name: r.recipient_name }))
+        }))
     }));
     res.json(result);
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -666,9 +688,35 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
 
 app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
   try {
+    // Also remove all recipient assignments for this client in this sheet
+    await pool.query(
+      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
+    );
     await pool.query(
       'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
       [req.params.id, req.params.clientId]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.post('/api/route-sheets/:id/clients/:clientId/recipients', requireAdmin, async (req, res) => {
+  const { recipient_id } = req.body;
+  try {
+    await pool.query(
+      'INSERT INTO route_sheet_client_recipients (route_sheet_id, client_id, recipient_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+      [req.params.id, req.params.clientId, recipient_id]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.delete('/api/route-sheets/:id/clients/:clientId/recipients/:recipientId', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2 AND recipient_id=$3',
+      [req.params.id, req.params.clientId, req.params.recipientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -709,10 +757,25 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     // Assigned client IDs
     const assignedClientIds = new Set(assignments.rows.map(a => a.client_id));
 
-    // Group orders by sheet
+    // Get per-client recipient filters
+    const recipientFilters = await dbClient.query(
+      'SELECT route_sheet_id, client_id, recipient_id FROM route_sheet_client_recipients'
+    );
+
+    // Group orders by sheet, filtered by configured recipients per client
     const result = [];
     for (const [sheetId, sheet] of Object.entries(sheetClients)) {
-      const sheetOrders = orders.rows.filter(o => sheet.clientIds.has(o.client_id));
+      const sheetOrders = orders.rows.filter(o => {
+        if (!sheet.clientIds.has(o.client_id)) return false;
+        // Check if this sheet has recipient filters for this client
+        const filters = recipientFilters.rows.filter(
+          r => r.route_sheet_id === sheetId && r.client_id === o.client_id
+        );
+        // If no recipients configured for this client in this sheet: include all orders
+        if (filters.length === 0) return true;
+        // Otherwise only include orders for configured recipients
+        return filters.some(f => f.recipient_id === o.recipient_id);
+      });
       result.push({ name: sheet.name, rows: sheetOrders });
     }
 
