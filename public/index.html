@@ -866,13 +866,20 @@ async function handleImportFile(input) {
           toast('⏳ Import en cours…');
           try {
             const result = await api('clients/import', { method: 'POST', body: { clients } });
-            let msg = `✓ ${result.created} client${result.created > 1 ? 's' : ''} importé${result.created > 1 ? 's' : ''}`;
-            if (result.errors && result.errors.length > 0) {
-              msg += ` — ${result.errors.length} erreur${result.errors.length > 1 ? 's' : ''}`;
-              console.warn('Import errors:', result.errors);
-            }
-            toast(msg);
             renderAdminClients();
+            if (result.errors && result.errors.length > 0) {
+              openModal(
+                `Import terminé — ${result.created} importé${result.created > 1 ? 's' : ''}, ${result.errors.length} erreur${result.errors.length > 1 ? 's' : ''}`,
+                `<p style="margin-bottom:12px;">✓ <strong>${result.created} client${result.created > 1 ? 's' : ''}</strong> importé${result.created > 1 ? 's' : ''} avec succès.</p>
+                <p style="margin-bottom:8px;color:var(--red);font-weight:600;">❌ ${result.errors.length} erreur${result.errors.length > 1 ? 's' : ''} :</p>
+                <div style="max-height:200px;overflow-y:auto;background:var(--red-light);border-radius:var(--radius-sm);padding:10px 12px;">
+                  ${result.errors.map(e => `<div style="font-size:13px;padding:3px 0;border-bottom:1px solid rgba(220,38,38,0.15);">${e}</div>`).join('')}
+                </div>`,
+                [{ label: 'Fermer', cls: 'btn-primary', action: closeModal }]
+              );
+            } else {
+              toast(`✓ ${result.created} client${result.created > 1 ? 's' : ''} importé${result.created > 1 ? 's' : ''} avec succès`);
+            }
           } catch(err) { toast('❌ ' + err.message); }
         }}
       ]);
