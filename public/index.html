@@ -780,9 +780,11 @@ async function renderAdminClients() {
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
   try {
     const [clients, recipients, assignments] = await Promise.all([api('clients'), api('recipients'), api('assignments')]);
-    let html = `<div style="margin-bottom:16px;display:flex;justify-content:flex-end;">
+    let html = `<div style="margin-bottom:16px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="triggerImportExcel()">📥 Importer depuis Excel</button>
       <button class="btn btn-primary btn-sm" onclick="showAddClientModal()">+ Ajouter un client</button>
-    </div>`;
+    </div>
+    <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportFile(this)">`;
     if (clients.length === 0) {
       html += '<div class="empty"><div class="empty-icon">👥</div><p>Aucun client</p></div>';
     } else {
@@ -807,6 +809,78 @@ async function renderAdminClients() {
     }
     el.innerHTML = html;
   } catch(e) { el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
+}
+
+function triggerImportExcel() {
+  document.getElementById('import-file-input').value = '';
+  document.getElementById('import-file-input').click();
+}
+
+async function handleImportFile(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  // Read file with SheetJS
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (rows.length < 2) { toast('⚠️ Fichier vide ou sans données'); return; }
+
+      // Detect header row — find Nom and Email columns (case-insensitive)
+      const headers = rows[0].map(h => String(h).trim().toLowerCase());
+      const nomIdx = headers.findIndex(h => h.includes('nom') || h === 'name');
+      const emailIdx = headers.findIndex(h => h.includes('email') || h.includes('mail'));
+
+      if (nomIdx === -1 || emailIdx === -1) {
+        toast('⚠️ Colonnes "Nom" et "Email" introuvables dans le fichier');
+        return;
+      }
+
+      const clients = rows.slice(1)
+        .filter(r => r[nomIdx] || r[emailIdx])
+        .map(r => ({ name: String(r[nomIdx] || '').trim(), email: String(r[emailIdx] || '').trim() }))
+        .filter(c => c.name && c.email);
+
+      if (clients.length === 0) { toast('⚠️ Aucune ligne valide trouvée'); return; }
+
+      // Show confirmation modal
+      openModal('Confirmer l\'import', `
+        <p style="margin-bottom:12px;">Fichier détecté : <strong>${file.name}</strong></p>
+        <p style="margin-bottom:12px;"><strong>${clients.length} client${clients.length > 1 ? 's' : ''}</strong> trouvé${clients.length > 1 ? 's' : ''}.</p>
+        <div style="background:var(--red-light);color:var(--red);padding:12px;border-radius:var(--radius-sm);font-size:13px;">
+          ⚠️ Cette action remplacera <strong>tous les clients existants</strong> ainsi que leurs commandes, historique et assignations.
+        </div>
+        <div style="margin-top:12px;max-height:180px;overflow-y:auto;background:var(--surface2);border-radius:var(--radius-sm);padding:8px 12px;">
+          ${clients.slice(0, 20).map(c => `<div style="font-size:13px;padding:3px 0;border-bottom:1px solid var(--border);">${c.name} — ${c.email}</div>`).join('')}
+          ${clients.length > 20 ? `<div style="font-size:12px;color:var(--ink2);padding:6px 0;">… et ${clients.length - 20} autres</div>` : ''}
+        </div>
+      `, [
+        { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
+        { label: 'Importer', cls: 'btn-danger', action: async () => {
+          closeModal();
+          toast('⏳ Import en cours…');
+          try {
+            const result = await api('clients/import', { method: 'POST', body: { clients } });
+            let msg = `✓ ${result.created} client${result.created > 1 ? 's' : ''} importé${result.created > 1 ? 's' : ''}`;
+            if (result.errors && result.errors.length > 0) {
+              msg += ` — ${result.errors.length} erreur${result.errors.length > 1 ? 's' : ''}`;
+              console.warn('Import errors:', result.errors);
+            }
+            toast(msg);
+            renderAdminClients();
+          } catch(err) { toast('❌ ' + err.message); }
+        }}
+      ]);
+    } catch(err) {
+      toast('❌ Erreur lecture fichier : ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
 }
 
 function showAddClientModal() {
@@ -1262,7 +1336,6 @@ function closeModal() {
 function onOverlayClick(e) {
   if (e.target === document.getElementById('modal-overlay')) closeModal();
 }
-
 
 function toast(msg) {
   const t = document.getElementById('toast');

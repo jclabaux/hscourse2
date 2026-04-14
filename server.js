@@ -615,6 +615,60 @@ app.get('/api/history/client/:clientId/:month', async (req, res) => {
   }
 });
 
+// ── BULK IMPORT CLIENTS ──────────────────────────────────
+app.post('/api/clients/import', requireAdmin, async (req, res) => {
+  const { clients } = req.body;
+  if (!Array.isArray(clients) || clients.length === 0) {
+    return res.status(400).json({ error: 'Aucune donnée à importer' });
+  }
+
+  const dbClient = await pool.connect();
+  try {
+    await dbClient.query('BEGIN');
+
+    // Delete all existing orders, history links, assignments, recipients and clients
+    await dbClient.query('DELETE FROM orders');
+    await dbClient.query('DELETE FROM order_history');
+    await dbClient.query('DELETE FROM route_sheet_client_recipients');
+    await dbClient.query('DELETE FROM route_sheet_clients');
+    await dbClient.query('DELETE FROM client_recipients');
+    await dbClient.query('DELETE FROM recipients');
+    await dbClient.query('DELETE FROM clients');
+
+    const created = [];
+    const errors = [];
+
+    for (const row of clients) {
+      const name = (row.name || '').trim();
+      const email = (row.email || '').trim().toLowerCase();
+      if (!name || !email) { errors.push(`Ligne ignorée : nom ou email manquant (${name || '?'})`); continue; }
+      try {
+        const r = await dbClient.query(
+          "INSERT INTO clients (name, email, password) VALUES ($1, $2, '1234') RETURNING id, name, email",
+          [name, email]
+        );
+        const newClient = r.rows[0];
+        // Auto-create matching recipient
+        await dbClient.query(
+          'INSERT INTO recipients (name, email, client_id) VALUES ($1,$2,$3)',
+          [name, email, newClient.id]
+        );
+        created.push(newClient);
+      } catch(e) {
+        errors.push(`${name} (${email}) : ${frenchError(e)}`);
+      }
+    }
+
+    await dbClient.query('COMMIT');
+    res.json({ created: created.length, errors });
+  } catch(e) {
+    await dbClient.query('ROLLBACK');
+    res.status(500).json({ error: frenchError(e) });
+  } finally {
+    dbClient.release();
+  }
+});
+
 // ── ROUTE SHEETS ─────────────────────────────────────────
 app.get('/api/route-sheets', requireAdmin, async (req, res) => {
   try {
