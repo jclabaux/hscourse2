@@ -20,7 +20,7 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS clients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL,
         login_id TEXT UNIQUE,
         password TEXT NOT NULL DEFAULT '1234',
         address TEXT DEFAULT '',
@@ -34,6 +34,14 @@ async function initDB() {
           SELECT 1 FROM pg_constraint WHERE conname = 'clients_name_key'
         ) THEN
           ALTER TABLE clients ADD CONSTRAINT clients_name_key UNIQUE (name);
+        END IF;
+      END $$;
+      -- Migration: drop unique constraint on email if exists
+      DO $$ BEGIN
+        IF EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'clients_email_key'
+        ) THEN
+          ALTER TABLE clients DROP CONSTRAINT clients_email_key;
         END IF;
       END $$;
       -- Migration: add login_id column if not exists
@@ -167,8 +175,8 @@ function frenchError(e) {
   if (msg.includes('clients_name_key') || (msg.includes('unique') && msg.includes('name'))) {
     return 'Un client avec ce nom existe déjà.';
   }
-  if (msg.includes('clients_email_key') || (msg.includes('unique') && msg.includes('email'))) {
-    return 'Un client avec cet e-mail existe déjà.';
+  if (msg.includes('clients_login_id_key') || (msg.includes('unique') && msg.includes('login_id'))) {
+    return 'Cet identifiant personnalisé est déjà utilisé.';
   }
   if (msg.includes('recipients') && msg.includes('unique')) {
     return 'Ce destinataire existe déjà.';
@@ -193,13 +201,19 @@ app.post('/api/auth/login', async (req, res) => {
       }
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
-    // Accept login_id or email as identifier
-    const r = await pool.query(
-      `SELECT id, name, email, login_id, password, address, phone, blocked FROM clients
-       WHERE LOWER(login_id) = LOWER($1) OR LOWER(email) = LOWER($1)
-       LIMIT 1`,
-      [email.trim()]
+    // Accept login_id (unique) or email as identifier
+    const identifier = email.trim();
+    // Try login_id first (unique), then email
+    let r = await pool.query(
+      'SELECT id, name, email, login_id, password, address, phone, blocked FROM clients WHERE LOWER(login_id) = LOWER($1) LIMIT 1',
+      [identifier]
     );
+    if (r.rows.length === 0) {
+      r = await pool.query(
+        'SELECT id, name, email, login_id, password, address, phone, blocked FROM clients WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        [identifier]
+      );
+    }
     const c = r.rows[0];
     if (c && c.password === password) {
       if (c.blocked) return res.status(403).json({ error: 'Compte bloqué. Contactez votre administrateur.' });
@@ -214,10 +228,14 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/change-password', async (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
   try {
-    const r = await pool.query(
-      'SELECT id, password FROM clients WHERE LOWER(login_id) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1',
-      [email]
+    let r = await pool.query(
+      'SELECT id, password FROM clients WHERE LOWER(login_id) = LOWER($1) LIMIT 1', [email]
     );
+    if (r.rows.length === 0) {
+      r = await pool.query(
+        'SELECT id, password FROM clients WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]
+      );
+    }
     const c = r.rows[0];
     if (!c || c.password !== oldPassword) return res.status(401).json({ error: 'Ancien mot de passe incorrect' });
     await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, c.id]);

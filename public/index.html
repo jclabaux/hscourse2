@@ -1030,9 +1030,15 @@ async function renderRouteSheets() {
   const el = document.getElementById('tab-routes');
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
   try {
-    const [sheets, clients, allRecipients] = await Promise.all([
-      api('route-sheets'), api('clients'), api('recipients')
+    const [sheets, clients, allRecipients, assignments] = await Promise.all([
+      api('route-sheets'), api('clients'), api('recipients'), api('assignments')
     ]);
+    // Build a map: client_id -> list of assigned recipient ids
+    const clientRecipientMap = {};
+    assignments.forEach(a => {
+      if (!clientRecipientMap[a.client_id]) clientRecipientMap[a.client_id] = new Set();
+      clientRecipientMap[a.client_id].add(a.recipient_id);
+    });
     let html = `<div style="margin-bottom:16px;display:flex;justify-content:flex-end;">
       <button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>
     </div>`;
@@ -1056,10 +1062,10 @@ async function renderRouteSheets() {
         } else {
           sheet.clients.forEach(c => {
             const assignedRecipIds = c.recipients.map(r => r.id);
-            // Recipients not yet assigned to this client in this sheet
-            // (only from clients that are recipients = all recipients)
+            // Only show recipients that are assigned to this client (from client_recipients)
+            const clientAssignedRecipIds = clientRecipientMap[c.id] || new Set();
             const unassignedRecips = allRecipients.filter(r =>
-              r.client_id !== c.id && !assignedRecipIds.includes(r.id)
+              clientAssignedRecipIds.has(r.id) && !assignedRecipIds.includes(r.id)
             );
             html += `<div style="border-bottom:1px solid var(--border);padding:14px 16px;">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
