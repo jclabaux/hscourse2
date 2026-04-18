@@ -26,6 +26,7 @@ async function initDB() {
         address TEXT DEFAULT '',
         phone TEXT DEFAULT '',
         blocked BOOLEAN NOT NULL DEFAULT FALSE,
+        paiement_course BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
       -- Migration: add unique constraint on name if not exists
@@ -34,6 +35,12 @@ async function initDB() {
           SELECT 1 FROM pg_constraint WHERE conname = 'clients_name_key'
         ) THEN
           ALTER TABLE clients ADD CONSTRAINT clients_name_key UNIQUE (name);
+        END IF;
+      END $$;
+      -- Migration: add paiement_course column if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='paiement_course') THEN
+          ALTER TABLE clients ADD COLUMN paiement_course BOOLEAN NOT NULL DEFAULT FALSE;
         END IF;
       END $$;
       -- Migration: drop unique constraint on email if exists
@@ -272,7 +279,7 @@ app.post('/api/config', requireAdmin, async (req, res) => {
 // ── CLIENTS ───────────────────────────────────────────────
 app.get('/api/clients', requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query('SELECT id, name, email, login_id, address, phone, blocked, created_at FROM clients ORDER BY name');
+    const r = await pool.query('SELECT id, name, email, login_id, address, phone, blocked, paiement_course, created_at FROM clients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: frenchError(e) });
@@ -280,14 +287,14 @@ app.get('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/clients', requireAdmin, async (req, res) => {
-  const { name, email, login_id, address, phone } = req.body;
+  const { name, email, login_id, address, phone, paiement_course } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // Create client
     const r = await client.query(
-      "INSERT INTO clients (name, email, login_id, address, phone, password) VALUES ($1, $2, $3, $4, $5, '1234') RETURNING id, name, email, login_id, address, phone",
-      [name, email, login_id || null, address || '', phone || '']
+      "INSERT INTO clients (name, email, login_id, address, phone, password, paiement_course) VALUES ($1, $2, $3, $4, $5, '1234', $6) RETURNING id, name, email, login_id, address, phone, paiement_course",
+      [name, email, login_id || null, address || '', phone || '', paiement_course || false]
     );
     const newClient = r.rows[0];
     // Auto-create matching recipient
@@ -306,13 +313,13 @@ app.post('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/clients/:id', requireAdmin, async (req, res) => {
-  const { name, email, login_id, address, phone } = req.body;
+  const { name, email, login_id, address, phone, paiement_course } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      'UPDATE clients SET name=$1, email=$2, login_id=$3, address=$4, phone=$5 WHERE id=$6',
-      [name, email, login_id || null, address || '', phone || '', req.params.id]
+      'UPDATE clients SET name=$1, email=$2, login_id=$3, address=$4, phone=$5, paiement_course=$6 WHERE id=$7',
+      [name, email, login_id || null, address || '', phone || '', paiement_course || false, req.params.id]
     );
     // Sync recipient
     await client.query(
