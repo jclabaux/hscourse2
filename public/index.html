@@ -697,7 +697,7 @@ async function renderAdminHistory() {
     const selected = months[0];
     let html = `<div class="history-month-select">
       <label style="font-size:13px;font-weight:600;color:var(--ink2);">Mois :</label>
-      <select id="history-month-sel" onchange="loadHistoryMonth(this.value)" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:'Epilogue',sans-serif;font-size:14px;background:var(--surface);">
+      <select id="history-month-sel" onchange="loadHistoryMonth(this.value)" style="padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:inherit;font-size:14px;background:var(--surface);">
         ${months.map(m => `<option value="${m}">${fmt(m)}</option>`).join('')}
       </select>
       <button class="btn btn-success btn-sm" onclick="exportHistoryMonth(document.getElementById('history-month-sel').value)">📊 Exporter</button>
@@ -780,34 +780,109 @@ async function renderAdminClients() {
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
   try {
     const [clients, recipients, assignments] = await Promise.all([api('clients'), api('recipients'), api('assignments')]);
-    let html = `<div style="margin-bottom:16px;display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;">
-      <button class="btn btn-secondary btn-sm" onclick="triggerImportExcel()">📥 Importer depuis Excel</button>
-      <button class="btn btn-primary btn-sm" onclick="showAddClientModal()">+ Ajouter un client</button>
-    </div>
-    <input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportFile(this)">`;
+
+    // Search bar + buttons
+    let html = '<div style="margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">'
+      + '<input type="text" id="client-search" placeholder="🔍 Rechercher un client…" oninput="filterClientList()"'
+      + ' style="flex:1;min-width:180px;padding:9px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;background:var(--surface);">'
+      + '<button class="btn btn-secondary btn-sm" onclick="triggerImportExcel()">📥 Importer</button>'
+      + '<button class="btn btn-primary btn-sm" onclick="showAddClientModal()">+ Ajouter</button>'
+      + '</div>'
+      + '<input type="file" id="import-file-input" accept=".xlsx,.xls,.csv" style="display:none;" onchange="handleImportFile(this)">';
+
     if (clients.length === 0) {
       html += '<div class="empty"><div class="empty-icon">👥</div><p>Aucun client</p></div>';
     } else {
-      html += '<div class="card"><table class="manage-table"><thead><tr><th>Nom</th><th>Email</th><th class="hide-mobile">Téléphone</th><th>Actions</th></tr></thead><tbody>';
-      clients.forEach(c => {
-        const assignedCount = assignments.filter(a => a.client_id === c.id).length;
-        const blockedBadge = c.blocked ? '<span class="badge" style="background:#fee2e2;color:#dc2626;margin-left:6px;">Bloqué</span>' : '';
-        html += `<tr style="${c.blocked ? 'opacity:0.6;' : ''}">
-          <td><div style="font-weight:600;">${c.name}${blockedBadge}</div><div style="font-size:12px;color:var(--ink2);">${assignedCount} destinataire${assignedCount !== 1 ? 's' : ''}</div></td>
-          <td style="font-size:13px;">${c.email}${c.login_id ? '<br><span style="color:var(--ink2);font-size:11px;">ID: ' + c.login_id + '</span>' : ''}</td>
-          <td class="hide-mobile" style="font-size:13px;">${c.phone || '—'}</td>
-          <td><div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <button class="btn btn-secondary btn-sm" onclick="showEditClientModal('${c.id}','${esc(c.name)}','${esc(c.email)}','${esc(c.login_id||'')}','${esc(c.address||'')}','${esc(c.phone||'')}')">✏️</button>
-            <button class="btn btn-secondary btn-sm" onclick="showAssignModal('${c.id}','${esc(c.name)}')">🔗</button>
-            <button class="btn btn-secondary btn-sm" onclick="showAdminChangePwdModal('${c.id}','${esc(c.name)}')">🔑</button>
-            <button class="btn ${c.blocked ? 'btn-success' : 'btn-danger'} btn-sm" onclick="toggleBlock('${c.id}','${esc(c.name)}',${!c.blocked})">${c.blocked ? '🔓 Débloquer' : '🚫 Bloquer'}</button>
-            <button class="btn btn-danger btn-sm" onclick="deleteClient('${c.id}','${esc(c.name)}')">🗑️</button>
-          </div></td>
-        </tr>`;
-      });
-      html += '</tbody></table></div>';
+      html += '<div class="card"><table class="manage-table"><thead><tr>'
+        + '<th>Nom</th><th>Email / Identifiant</th><th class="hide-mobile">Téléphone</th><th>Actions</th>'
+        + '</tr></thead><tbody id="clients-tbody"></tbody></table></div>';
     }
     el.innerHTML = html;
+
+    if (clients.length === 0) return;
+
+    // Build rows via DOM to avoid all template literal issues
+    const tbody = document.getElementById('clients-tbody');
+    clients.forEach(c => {
+      const assignedCount = assignments.filter(a => a.client_id === c.id).length;
+      const tr = document.createElement('tr');
+      tr.className = 'client-row';
+      if (c.blocked) tr.style.opacity = '0.6';
+
+      // Name cell
+      const td1 = document.createElement('td');
+      const nameDiv = document.createElement('div');
+      nameDiv.style.fontWeight = '600';
+      nameDiv.textContent = c.name;
+      if (c.blocked) {
+        const badge = document.createElement('span');
+        badge.className = 'badge';
+        badge.style.cssText = 'background:#fee2e2;color:#dc2626;margin-left:6px;';
+        badge.textContent = 'Bloqué';
+        nameDiv.appendChild(badge);
+      }
+      const subDiv = document.createElement('div');
+      subDiv.style.cssText = 'font-size:12px;color:var(--ink2);';
+      subDiv.textContent = assignedCount + ' destinataire' + (assignedCount !== 1 ? 's' : '');
+      td1.appendChild(nameDiv);
+      td1.appendChild(subDiv);
+
+      // Email cell
+      const td2 = document.createElement('td');
+      td2.style.fontSize = '13px';
+      td2.textContent = c.email;
+      if (c.login_id) {
+        const br = document.createElement('br');
+        const idSpan = document.createElement('span');
+        idSpan.style.cssText = 'color:var(--ink2);font-size:11px;';
+        idSpan.textContent = 'ID : ' + c.login_id;
+        td2.appendChild(br);
+        td2.appendChild(idSpan);
+      }
+
+      // Phone cell
+      const td3 = document.createElement('td');
+      td3.className = 'hide-mobile';
+      td3.style.fontSize = '13px';
+      td3.textContent = c.phone || '—';
+
+      // Actions cell
+      const td4 = document.createElement('td');
+      const actDiv = document.createElement('div');
+      actDiv.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;';
+
+      const btnEdit = document.createElement('button');
+      btnEdit.className = 'btn btn-secondary btn-sm';
+      btnEdit.textContent = '✏️';
+      btnEdit.onclick = () => showEditClientModal(c.id, c.name, c.email, c.login_id||'', c.address||'', c.phone||'');
+
+      const btnAssign = document.createElement('button');
+      btnAssign.className = 'btn btn-secondary btn-sm';
+      btnAssign.textContent = '🔗';
+      btnAssign.onclick = () => showAssignModal(c.id, c.name);
+
+      const btnPwd = document.createElement('button');
+      btnPwd.className = 'btn btn-secondary btn-sm';
+      btnPwd.textContent = '🔑';
+      btnPwd.onclick = () => showAdminChangePwdModal(c.id, c.name);
+
+      const btnBlock = document.createElement('button');
+      btnBlock.className = 'btn btn-sm ' + (c.blocked ? 'btn-success' : 'btn-danger');
+      btnBlock.textContent = c.blocked ? '🔓 Débloquer' : '🚫 Bloquer';
+      btnBlock.onclick = () => toggleBlock(c.id, c.name, !c.blocked);
+
+      const btnDel = document.createElement('button');
+      btnDel.className = 'btn btn-danger btn-sm';
+      btnDel.textContent = '🗑️';
+      btnDel.onclick = () => deleteClient(c.id, c.name);
+
+      actDiv.append(btnEdit, btnAssign, btnPwd, btnBlock, btnDel);
+      td4.appendChild(actDiv);
+
+      tr.append(td1, td2, td3, td4);
+      tbody.appendChild(tr);
+    });
+
   } catch(e) { el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
 }
 
@@ -890,6 +965,15 @@ async function handleImportFile(input) {
   reader.readAsArrayBuffer(file);
 }
 
+function filterClientList() {
+  const q = (document.getElementById('client-search')?.value || '').toLowerCase().trim();
+  document.querySelectorAll('#tab-clients table tbody tr.client-row').forEach(row => {
+    const nameCell = row.querySelector('td:first-child div:first-child');
+    const name = nameCell ? nameCell.textContent.toLowerCase() : '';
+    row.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+}
+
 function showAddClientModal() {
   openModal('Ajouter un client', `
     <div class="form-group"><label>Nom *</label><input type="text" id="ac-name" placeholder="Nom complet"></div>
@@ -943,20 +1027,66 @@ async function showAssignModal(clientId, clientName) {
   try {
     const [recipients, assignments] = await Promise.all([api('recipients'), api('assignments')]);
     const assigned = assignments.filter(a => a.client_id === clientId).map(a => a.recipient_id);
-    // Exclude self from the list
     const available = recipients.filter(r => r.client_id !== clientId);
+
     if (available.length === 0) {
       document.getElementById('modal-body').innerHTML = '<div class="empty"><p>Aucun autre client disponible comme destinataire</p></div>';
       return;
     }
-    document.getElementById('modal-body').innerHTML = '<p style="font-size:13px;color:var(--ink2);margin-bottom:12px;">Sélectionnez les clients qui sont destinataires de <strong>' + clientName + '</strong> :</p><div class="assign-grid">' +
-      available.map(r => `
-        <div class="assign-item">
-          <input type="checkbox" id="asgn-${r.id.replace(/-/g,'')}" ${assigned.includes(r.id) ? 'checked' : ''}
-            onchange="toggleAssignment('${clientId}','${r.id}',this.checked)">
-          <label for="asgn-${r.id.replace(/-/g,'')}">${r.name}${r.email ? ' <span style="color:var(--ink2);font-size:12px;">· ' + r.email + '</span>' : ''}</label>
-        </div>`).join('') + '</div>';
-  } catch(e) { document.getElementById('modal-body').innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
+
+    // Build modal body with search using DOM
+    const body = document.getElementById('modal-body');
+    body.innerHTML = '';
+
+    const intro = document.createElement('p');
+    intro.style.cssText = 'font-size:13px;color:var(--ink2);margin-bottom:10px;';
+    intro.innerHTML = 'Sélectionnez les destinataires de <strong>' + clientName + '</strong> :';
+    body.appendChild(intro);
+
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = '🔍 Rechercher…';
+    searchInput.style.cssText = 'width:100%;padding:9px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;margin-bottom:10px;';
+    body.appendChild(searchInput);
+
+    const grid = document.createElement('div');
+    grid.className = 'assign-grid';
+    body.appendChild(grid);
+
+    function buildGrid(filter) {
+      grid.innerHTML = '';
+      const filtered = filter
+        ? available.filter(r => r.name.toLowerCase().includes(filter.toLowerCase()))
+        : available;
+      filtered.forEach(r => {
+        const item = document.createElement('div');
+        item.className = 'assign-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = assigned.includes(r.id);
+        cb.style.cssText = 'width:18px;height:18px;accent-color:var(--blue);cursor:pointer;flex-shrink:0;';
+        cb.onchange = () => toggleAssignment(clientId, r.id, cb.checked);
+        const lbl = document.createElement('label');
+        lbl.style.cursor = 'pointer';
+        lbl.textContent = r.name + (r.email ? ' · ' + r.email : '');
+        item.append(cb, lbl);
+        grid.appendChild(item);
+      });
+    }
+
+    searchInput.addEventListener('input', () => buildGrid(searchInput.value));
+    buildGrid('');
+
+  } catch(e) {
+    document.getElementById('modal-body').innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>';
+  }
+}
+
+function filterAssignGrid(val) {
+  const container = document.getElementById('assign-grid-container');
+  if (container && window._renderAssignGrid) {
+    container.innerHTML = window._renderAssignGrid(val);
+  }
 }
 
 async function toggleAssignment(clientId, recipientId, checked) {
@@ -1071,7 +1201,7 @@ async function renderRouteSheets() {
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
                 <div style="font-weight:700;font-size:15px;color:var(--ink);">📦 ${c.name}</div>
                 <button onclick="removeClientFromSheet('${sheet.id}','${c.id}')"
-                  style="background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;font-family:'Epilogue',sans-serif;">
+                  style="background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;font-size:inherit;">
                   Retirer
                 </button>
               </div>
@@ -1090,7 +1220,7 @@ async function renderRouteSheets() {
               ${unassignedRecips.length > 0 ? `
               <div style="display:flex;gap:8px;">
                 <select id="add-recip-${sheet.id}-${c.id}"
-                  style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:'Epilogue',sans-serif;font-size:13px;background:var(--surface);">
+                  style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:inherit;font-size:13px;background:var(--surface);">
                   <option value="">+ Ajouter un destinataire filtre…</option>
                   ${unassignedRecips.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
                 </select>
@@ -1107,7 +1237,7 @@ async function renderRouteSheets() {
           ${unassigned.length > 0 ? `
           <div style="display:flex;gap:8px;">
             <select id="add-client-${sheet.id}"
-              style="flex:1;padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-family:'Epilogue',sans-serif;font-size:14px;background:var(--surface);">
+              style="flex:1;padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:inherit;font-size:14px;background:var(--surface);">
               <option value="">— Choisir un client —</option>
               ${unassigned.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
             </select>
