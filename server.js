@@ -21,6 +21,7 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL UNIQUE,
         email TEXT NOT NULL UNIQUE,
+        login_id TEXT UNIQUE,
         password TEXT NOT NULL DEFAULT '1234',
         address TEXT DEFAULT '',
         phone TEXT DEFAULT '',
@@ -33,6 +34,12 @@ async function initDB() {
           SELECT 1 FROM pg_constraint WHERE conname = 'clients_name_key'
         ) THEN
           ALTER TABLE clients ADD CONSTRAINT clients_name_key UNIQUE (name);
+        END IF;
+      END $$;
+      -- Migration: add login_id column if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='clients' AND column_name='login_id') THEN
+          ALTER TABLE clients ADD COLUMN login_id TEXT UNIQUE;
         END IF;
       END $$;
       -- Migration: add blocked column if not exists
@@ -186,8 +193,11 @@ app.post('/api/auth/login', async (req, res) => {
       }
       return res.status(401).json({ error: 'Identifiants incorrects' });
     }
+    // Accept login_id or email as identifier
     const r = await pool.query(
-      'SELECT id, name, email, password, address, phone, blocked FROM clients WHERE LOWER(email) = LOWER($1)',
+      `SELECT id, name, email, login_id, password, address, phone, blocked FROM clients
+       WHERE LOWER(login_id) = LOWER($1) OR LOWER(email) = LOWER($1)
+       LIMIT 1`,
       [email.trim()]
     );
     const c = r.rows[0];
@@ -204,7 +214,10 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/change-password', async (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
   try {
-    const r = await pool.query('SELECT id, password FROM clients WHERE LOWER(email) = LOWER($1)', [email]);
+    const r = await pool.query(
+      'SELECT id, password FROM clients WHERE LOWER(login_id) = LOWER($1) OR LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
+    );
     const c = r.rows[0];
     if (!c || c.password !== oldPassword) return res.status(401).json({ error: 'Ancien mot de passe incorrect' });
     await pool.query('UPDATE clients SET password = $1 WHERE id = $2', [newPassword, c.id]);
@@ -241,7 +254,7 @@ app.post('/api/config', requireAdmin, async (req, res) => {
 // ── CLIENTS ───────────────────────────────────────────────
 app.get('/api/clients', requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query('SELECT id, name, email, address, phone, blocked, created_at FROM clients ORDER BY name');
+    const r = await pool.query('SELECT id, name, email, login_id, address, phone, blocked, created_at FROM clients ORDER BY name');
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: frenchError(e) });
@@ -249,14 +262,14 @@ app.get('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/clients', requireAdmin, async (req, res) => {
-  const { name, email, address, phone } = req.body;
+  const { name, email, login_id, address, phone } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     // Create client
     const r = await client.query(
-      "INSERT INTO clients (name, email, address, phone, password) VALUES ($1, $2, $3, $4, '1234') RETURNING id, name, email, address, phone",
-      [name, email, address || '', phone || '']
+      "INSERT INTO clients (name, email, login_id, address, phone, password) VALUES ($1, $2, $3, $4, $5, '1234') RETURNING id, name, email, login_id, address, phone",
+      [name, email, login_id || null, address || '', phone || '']
     );
     const newClient = r.rows[0];
     // Auto-create matching recipient
@@ -275,13 +288,13 @@ app.post('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/clients/:id', requireAdmin, async (req, res) => {
-  const { name, email, address, phone } = req.body;
+  const { name, email, login_id, address, phone } = req.body;
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query(
-      'UPDATE clients SET name=$1, email=$2, address=$3, phone=$4 WHERE id=$5',
-      [name, email, address || '', phone || '', req.params.id]
+      'UPDATE clients SET name=$1, email=$2, login_id=$3, address=$4, phone=$5 WHERE id=$6',
+      [name, email, login_id || null, address || '', phone || '', req.params.id]
     );
     // Sync recipient
     await client.query(
