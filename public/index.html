@@ -814,13 +814,6 @@ async function renderAdminClients() {
       const nameDiv = document.createElement('div');
       nameDiv.style.fontWeight = '600';
       nameDiv.textContent = c.name;
-      if (c.paiement_course) {
-        const badgeP = document.createElement('span');
-        badgeP.className = 'badge';
-        badgeP.style.cssText = 'background:#dbeafe;color:#2563eb;margin-left:6px;font-size:11px;';
-        badgeP.textContent = 'Paiement course';
-        nameDiv.appendChild(badgeP);
-      }
       if (c.blocked) {
         const badge = document.createElement('span');
         badge.className = 'badge';
@@ -861,7 +854,7 @@ async function renderAdminClients() {
       const btnEdit = document.createElement('button');
       btnEdit.className = 'btn btn-secondary btn-sm';
       btnEdit.textContent = '✏️';
-      btnEdit.onclick = () => showEditClientModal(c.id, c.name, c.email, c.login_id||'', c.address||'', c.phone||'', c.paiement_course||false);
+      btnEdit.onclick = () => showEditClientModal(c.id, c.name, c.email, c.login_id||'', c.address||'', c.phone||'');
 
       const btnAssign = document.createElement('button');
       btnAssign.className = 'btn btn-secondary btn-sm';
@@ -988,11 +981,7 @@ function showAddClientModal() {
     <div class="form-group"><label>Identifiant personnalisé <span style="font-weight:400;color:var(--ink2);">(optionnel)</span></label><input type="text" id="ac-loginid" placeholder="Ex: dupont17, cabinet-nord…"></div>
     <div class="form-group"><label>Adresse</label><input type="text" id="ac-address" placeholder="Adresse postale"></div>
     <div class="form-group"><label>Téléphone</label><input type="tel" id="ac-phone" placeholder="06 00 00 00 00"></div>
-    <label style="display:flex;align-items:center;gap:10px;padding:10px 0;cursor:pointer;">
-      <input type="checkbox" id="ac-paiement" style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer;">
-      <span style="font-size:14px;font-weight:500;">Paiement course</span>
-    </label>
-    <p style="font-size:12px;color:var(--ink2);margin-top:4px;">Mot de passe par défaut : <strong>1234</strong> — Le client peut se connecter avec son e-mail <strong>ou</strong> son identifiant personnalisé.</p>
+    <p style="font-size:12px;color:var(--ink2);margin-top:8px;">Mot de passe par défaut : <strong>1234</strong> — Le client peut se connecter avec son e-mail <strong>ou</strong> son identifiant personnalisé.</p>
   `, [
     { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
     { label: 'Ajouter', cls: 'btn-primary', action: async () => {
@@ -1000,24 +989,20 @@ function showAddClientModal() {
       const email = document.getElementById('ac-email').value.trim();
       if (!name || !email) { toast('⚠️ Nom et email obligatoires'); return; }
       try {
-        await api('clients', { method: 'POST', body: { name, email, login_id: document.getElementById('ac-loginid').value.trim() || null, address: document.getElementById('ac-address').value.trim(), phone: document.getElementById('ac-phone').value.trim(), paiement_course: document.getElementById('ac-paiement').checked } });
+        await api('clients', { method: 'POST', body: { name, email, login_id: document.getElementById('ac-loginid').value.trim() || null, address: document.getElementById('ac-address').value.trim(), phone: document.getElementById('ac-phone').value.trim() } });
         closeModal(); toast('✓ Client ajouté'); renderAdminClients();
       } catch(e) { toast('❌ ' + e.message); }
     }}
   ]);
 }
 
-function showEditClientModal(id, name, email, loginId, address, phone, paiementCourse) {
+function showEditClientModal(id, name, email, loginId, address, phone) {
   openModal('Modifier le client', `
     <div class="form-group"><label>Nom *</label><input type="text" id="ec-name" value="${name}"></div>
     <div class="form-group"><label>Email *</label><input type="email" id="ec-email" value="${email}"></div>
     <div class="form-group"><label>Identifiant personnalisé <span style="font-weight:400;color:var(--ink2);">(optionnel)</span></label><input type="text" id="ec-loginid" value="${loginId || ''}" placeholder="Ex: dupont17, cabinet-nord…"></div>
     <div class="form-group"><label>Adresse</label><input type="text" id="ec-address" value="${address}"></div>
     <div class="form-group"><label>Téléphone</label><input type="tel" id="ec-phone" value="${phone}"></div>
-    <label style="display:flex;align-items:center;gap:10px;padding:10px 0;cursor:pointer;">
-      <input type="checkbox" id="ec-paiement" ${paiementCourse ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer;">
-      <span style="font-size:14px;font-weight:500;">Paiement course</span>
-    </label>
   `, [
     { label: 'Annuler', cls: 'btn-secondary', action: closeModal },
     { label: 'Enregistrer', cls: 'btn-primary', action: async () => {
@@ -1027,8 +1012,7 @@ function showEditClientModal(id, name, email, loginId, address, phone, paiementC
           email: document.getElementById('ec-email').value.trim(),
           login_id: document.getElementById('ec-loginid').value.trim() || null,
           address: document.getElementById('ec-address').value.trim(),
-          phone: document.getElementById('ec-phone').value.trim(),
-          paiement_course: document.getElementById('ec-paiement').checked
+          phone: document.getElementById('ec-phone').value.trim()
         }});
         closeModal(); toast('✓ Client modifié'); renderAdminClients();
       } catch(e) { toast('❌ ' + e.message); }
