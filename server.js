@@ -837,14 +837,16 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   try {
     await dbClient.query('BEGIN');
 
-    // Get all orders
+    // Get all orders with paiement_course from client_recipients
     const orders = await dbClient.query(
       `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.ordered_at, o.month_label,
               c.name as client_name, c.address as client_address,
-              r.name as recipient_name
+              r.name as recipient_name,
+              COALESCE(cr.paiement_course, false) as paiement_course
        FROM orders o
        JOIN clients c ON c.id = o.client_id
        JOIN recipients r ON r.id = o.recipient_id
+       LEFT JOIN client_recipients cr ON cr.client_id = o.client_id AND cr.recipient_id = o.recipient_id
        WHERE o.quantity > 0
        ORDER BY c.name, r.name`
     );

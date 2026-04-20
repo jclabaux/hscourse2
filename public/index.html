@@ -1441,7 +1441,9 @@ function buildExportRows(rows) {
   rows.forEach(o => {
     if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
     byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
-    byClient[o.client_name].recipients[o.recipient_name] = o.quantity;
+    // Append " \R" to recipient name if paiement_course is true
+    const recipLabel = o.recipient_name + (o.paiement_course ? ' \\R' : '');
+    byClient[o.client_name].recipients[recipLabel] = o.quantity;
   });
   const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
   const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
