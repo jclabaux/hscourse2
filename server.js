@@ -84,8 +84,16 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
         recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
+        paiement_course BOOLEAN NOT NULL DEFAULT FALSE,
         UNIQUE(client_id, recipient_id)
       );
+      -- Migration: add paiement_course to client_recipients if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='client_recipients' AND column_name='paiement_course') THEN
+          ALTER TABLE client_recipients ADD COLUMN paiement_course BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS orders (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -441,7 +449,7 @@ app.get('/api/clients/:id/recipients', async (req, res) => {
 
 app.get('/api/assignments', requireAdmin, async (req, res) => {
   try {
-    const r = await pool.query('SELECT client_id, recipient_id FROM client_recipients');
+    const r = await pool.query('SELECT client_id, recipient_id, paiement_course FROM client_recipients');
     res.json(r.rows);
   } catch (e) {
     res.status(500).json({ error: frenchError(e) });
@@ -449,11 +457,27 @@ app.get('/api/assignments', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/assignments', requireAdmin, async (req, res) => {
-  const { client_id, recipient_id } = req.body;
+  const { client_id, recipient_id, paiement_course } = req.body;
   try {
     await pool.query(
-      'INSERT INTO client_recipients (client_id, recipient_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-      [client_id, recipient_id]
+      `INSERT INTO client_recipients (client_id, recipient_id, paiement_course)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (client_id, recipient_id)
+       DO UPDATE SET paiement_course = EXCLUDED.paiement_course`,
+      [client_id, recipient_id, paiement_course || false]
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: frenchError(e) });
+  }
+});
+
+app.patch('/api/assignments', requireAdmin, async (req, res) => {
+  const { client_id, recipient_id, paiement_course } = req.body;
+  try {
+    await pool.query(
+      'UPDATE client_recipients SET paiement_course=$1 WHERE client_id=$2 AND recipient_id=$3',
+      [paiement_course, client_id, recipient_id]
     );
     res.json({ success: true });
   } catch (e) {
