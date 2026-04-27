@@ -1546,7 +1546,7 @@ async function exportByRoute() {
       try {
         const data = await api('orders/export-by-route', { method: 'POST' });
         if (!data.sheets || data.sheets.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
-        const sheetsWithData = data.sheets.filter(s => s.rows && s.rows.length > 0);
+        const sheetsWithData = data.sheets.filter(s => (s.rows && s.rows.length > 0) || (s.relayEntries && s.relayEntries.length > 0));
         if (sheetsWithData.length === 0) { toast('⚠️ Aucune commande à exporter'); return; }
         const dateStr = new Date().toLocaleDateString('fr-FR').replace(/\//g, '-');
         // Create one Excel workbook with one sheet per feuille de route

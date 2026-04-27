@@ -967,6 +967,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     await dbClient.query('DELETE FROM orders WHERE quantity > 0');
     await dbClient.query('COMMIT');
 
+    // Debug logs
+    console.log('[export-by-route] total orders:', orders.rows.length);
+    console.log('[export-by-route] sheets:', sheets.rows.map(s => s.name));
+    console.log('[export-by-route] assignments:', assignments.rows.length);
+    result.forEach(r => console.log('[export-by-route] sheet', r.name, '-> rows:', r.rows.length, 'relays:', r.relayEntries.length));
+
     res.json({ sheets: result });
   } catch(e) {
     await dbClient.query('ROLLBACK');
