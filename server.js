@@ -969,8 +969,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
     // Debug logs
     console.log('[export-by-route] total orders:', orders.rows.length);
+    console.log('[export-by-route] order client_ids:', orders.rows.map(o => o.client_id));
     console.log('[export-by-route] sheets:', sheets.rows.map(s => s.name));
     console.log('[export-by-route] assignments:', assignments.rows.length);
+    console.log('[export-by-route] assignment client_ids:', assignments.rows.map(a => a.client_id));
+    Object.entries(sheetClients).forEach(([sid, s]) => {
+      console.log('[export-by-route] sheet', s.name, 'clientIds:', [...s.clientIds]);
+    });
     result.forEach(r => console.log('[export-by-route] sheet', r.name, '-> rows:', r.rows.length, 'relays:', r.relayEntries.length));
 
     res.json({ sheets: result });
