@@ -918,8 +918,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         const filters = recipientFilters.rows.filter(
           r => r.route_sheet_id === sheetId && r.client_id === o.client_id
         );
+        // No filters configured for this client in this sheet -> include all orders
         if (filters.length === 0) return true;
-        return filters.some(f => f.recipient_id === o.recipient_id && !f.relay_sheet_id);
+        // Include if this recipient is in the filter list AND has no relay (delivered here directly)
+        const matchingFilter = filters.find(f => f.recipient_id === o.recipient_id);
+        if (!matchingFilter) return false; // recipient not in filter list
+        return !matchingFilter.relay_sheet_id; // exclude if relayed to another sheet
       });
 
       // Find relay orders for this sheet: orders from other sheets where relay_sheet_id = sheetId
