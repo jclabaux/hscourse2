@@ -150,8 +150,17 @@ async function initDB() {
         route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE,
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
         recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
+        relay_sheet_id UUID REFERENCES route_sheets(id) ON DELETE SET NULL DEFAULT NULL,
         UNIQUE(route_sheet_id, client_id, recipient_id)
       );
+      -- Migration: add relay_sheet_id if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='route_sheet_client_recipients' AND column_name='relay_sheet_id') THEN
+          ALTER TABLE route_sheet_client_recipients
+            ADD COLUMN relay_sheet_id UUID REFERENCES route_sheets(id) ON DELETE SET NULL DEFAULT NULL;
+        END IF;
+      END $$;
 
       INSERT INTO config (key, value) VALUES
         ('admin_password', 'admin123'),
@@ -735,9 +744,11 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
        ORDER BY c.name`
     );
     const recipientAssignments = await pool.query(
-      `SELECT rscr.route_sheet_id, rscr.client_id, rscr.recipient_id, r.name as recipient_name
+      `SELECT rscr.route_sheet_id, rscr.client_id, rscr.recipient_id, rscr.relay_sheet_id,
+              r.name as recipient_name, rs2.name as relay_sheet_name
        FROM route_sheet_client_recipients rscr
        JOIN recipients r ON r.id = rscr.recipient_id
+       LEFT JOIN route_sheets rs2 ON rs2.id = rscr.relay_sheet_id
        ORDER BY r.name`
     );
     const result = sheets.rows.map(s => ({
@@ -749,7 +760,12 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
           name: a.client_name,
           recipients: recipientAssignments.rows
             .filter(r => r.route_sheet_id === s.id && r.client_id === a.client_id)
-            .map(r => ({ id: r.recipient_id, name: r.recipient_name }))
+            .map(r => ({
+              id: r.recipient_id,
+              name: r.recipient_name,
+              relay_sheet_id: r.relay_sheet_id,
+              relay_sheet_name: r.relay_sheet_name
+            }))
         }))
     }));
     res.json(result);
@@ -811,11 +827,25 @@ app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, 
 });
 
 app.post('/api/route-sheets/:id/clients/:clientId/recipients', requireAdmin, async (req, res) => {
-  const { recipient_id } = req.body;
+  const { recipient_id, relay_sheet_id } = req.body;
   try {
     await pool.query(
-      'INSERT INTO route_sheet_client_recipients (route_sheet_id, client_id, recipient_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-      [req.params.id, req.params.clientId, recipient_id]
+      `INSERT INTO route_sheet_client_recipients (route_sheet_id, client_id, recipient_id, relay_sheet_id)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (route_sheet_id, client_id, recipient_id)
+       DO UPDATE SET relay_sheet_id = EXCLUDED.relay_sheet_id`,
+      [req.params.id, req.params.clientId, recipient_id, relay_sheet_id || null]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.patch('/api/route-sheets/:id/clients/:clientId/recipients/:recipientId', requireAdmin, async (req, res) => {
+  const { relay_sheet_id } = req.body;
+  try {
+    await pool.query(
+      'UPDATE route_sheet_client_recipients SET relay_sheet_id=$1 WHERE route_sheet_id=$2 AND client_id=$3 AND recipient_id=$4',
+      [relay_sheet_id || null, req.params.id, req.params.clientId, req.params.recipientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -868,26 +898,52 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     // Assigned client IDs
     const assignedClientIds = new Set(assignments.rows.map(a => a.client_id));
 
-    // Get per-client recipient filters
+    // Get per-client recipient filters with relay info
     const recipientFilters = await dbClient.query(
-      'SELECT route_sheet_id, client_id, recipient_id FROM route_sheet_client_recipients'
+      `SELECT rscr.route_sheet_id, rscr.client_id, rscr.recipient_id, rscr.relay_sheet_id,
+              rs.name as relay_sheet_name
+       FROM route_sheet_client_recipients rscr
+       LEFT JOIN route_sheets rs ON rs.id = rscr.relay_sheet_id`
     );
+
+    // Build relay map: target_sheet_id -> [{client_name, client_address, qty}]
+    // For each sheet, find all (client, recipient) pairs from OTHER sheets that relay TO this sheet
+    const relayMap = {}; // relay_sheet_id -> list of relay entries
 
     // Group orders by sheet, filtered by configured recipients per client
     const result = [];
     for (const [sheetId, sheet] of Object.entries(sheetClients)) {
       const sheetOrders = orders.rows.filter(o => {
         if (!sheet.clientIds.has(o.client_id)) return false;
-        // Check if this sheet has recipient filters for this client
         const filters = recipientFilters.rows.filter(
           r => r.route_sheet_id === sheetId && r.client_id === o.client_id
         );
-        // If no recipients configured for this client in this sheet: include all orders
         if (filters.length === 0) return true;
-        // Otherwise only include orders for configured recipients
-        return filters.some(f => f.recipient_id === o.recipient_id);
+        return filters.some(f => f.recipient_id === o.recipient_id && !f.relay_sheet_id);
       });
-      result.push({ name: sheet.name, rows: sheetOrders });
+
+      // Find relay orders for this sheet: orders from other sheets where relay_sheet_id = sheetId
+      const relayEntries = [];
+      recipientFilters.rows
+        .filter(f => f.relay_sheet_id === sheetId)
+        .forEach(f => {
+          // Find matching orders for this client/recipient from any sheet
+          const relayOrders = orders.rows.filter(o =>
+            o.client_id === f.client_id && o.recipient_id === f.recipient_id
+          );
+          const qty = relayOrders.reduce((s, o) => s + parseInt(o.quantity || 0), 0);
+          if (qty > 0) {
+            const order = relayOrders[0];
+            relayEntries.push({
+              client_id: f.client_id,
+              client_name: order ? order.client_name : f.client_id,
+              client_address: order ? (order.client_address || '') : '',
+              qty
+            });
+          }
+        });
+
+      result.push({ name: sheet.name, rows: sheetOrders, relayEntries });
     }
 
     // "Autres" — clients with orders but not in any sheet

@@ -1226,92 +1226,217 @@ async function renderRouteSheets() {
     const [sheets, clients, allRecipients, assignments] = await Promise.all([
       api('route-sheets'), api('clients'), api('recipients'), api('assignments')
     ]);
-    // Build a map: client_id -> list of assigned recipient ids
     const clientRecipientMap = {};
     assignments.forEach(a => {
       if (!clientRecipientMap[a.client_id]) clientRecipientMap[a.client_id] = new Set();
       clientRecipientMap[a.client_id].add(a.recipient_id);
     });
-    let html = `<div style="margin-bottom:16px;display:flex;justify-content:flex-end;">
-      <button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>
-    </div>`;
+
+    el.innerHTML = '';
+
+    // Add button
+    const addBtn = document.createElement('div');
+    addBtn.style.cssText = 'margin-bottom:16px;display:flex;justify-content:flex-end;';
+    addBtn.innerHTML = '<button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>';
+    el.appendChild(addBtn);
+
     if (sheets.length === 0) {
-      html += '<div class="empty"><div class="empty-icon">🗺️</div><p>Aucune feuille de route.<br>Créez-en une pour segmenter vos exports.</p></div>';
-    } else {
-      sheets.forEach(sheet => {
-        const unassigned = clients.filter(c => !sheet.clients.find(sc => sc.id === c.id));
-        html += `<div class="card" style="margin-bottom:20px;">
-          <div class="card-header">
-            <div class="card-title">🗺️ ${sheet.name}</div>
-            <div style="display:flex;gap:8px;">
-              <button class="btn btn-secondary btn-sm" onclick="showEditRouteSheetModal('${sheet.id}','${esc(sheet.name)}')">✏️</button>
-              <button class="btn btn-danger btn-sm" onclick="deleteRouteSheet('${sheet.id}','${esc(sheet.name)}')">🗑️</button>
-            </div>
-          </div>
-          <div class="card-body" style="padding:0;">`;
-
-        if (sheet.clients.length === 0) {
-          html += '<p style="font-size:13px;color:var(--ink2);font-style:italic;padding:16px;">Aucun client assigné</p>';
-        } else {
-          sheet.clients.forEach(c => {
-            const assignedRecipIds = c.recipients.map(r => r.id);
-            // Only show recipients that are assigned to this client (from client_recipients)
-            const clientAssignedRecipIds = clientRecipientMap[c.id] || new Set();
-            const unassignedRecips = allRecipients.filter(r =>
-              clientAssignedRecipIds.has(r.id) && !assignedRecipIds.includes(r.id)
-            );
-            html += `<div style="border-bottom:1px solid var(--border);padding:14px 16px;">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-                <div style="font-weight:700;font-size:15px;color:var(--ink);">📦 ${c.name}</div>
-                <button onclick="removeClientFromSheet('${sheet.id}','${c.id}')"
-                  style="background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;font-size:inherit;">
-                  Retirer
-                </button>
-              </div>
-              <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:8px;">
-                Destinataires filtrés ${c.recipients.length > 0 ? '(' + c.recipients.length + ')' : '<span style="font-weight:400;text-transform:none;letter-spacing:0;">— tous si vide</span>'}
-              </div>
-              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-                ${c.recipients.map(r => `
-                  <div style="display:inline-flex;align-items:center;gap:6px;background:var(--blue-light);color:var(--blue);padding:4px 10px;border-radius:20px;font-size:13px;font-weight:500;">
-                    ${r.name}
-                    <button onclick="removeRecipientFromSheetClient('${sheet.id}','${c.id}','${r.id}')"
-                      style="background:none;border:none;cursor:pointer;color:var(--blue);font-size:16px;line-height:1;padding:0;">×</button>
-                  </div>`).join('')}
-                ${c.recipients.length === 0 ? '<span style="font-size:12px;color:var(--ink2);font-style:italic;">Tous les destinataires inclus</span>' : ''}
-              </div>
-              ${unassignedRecips.length > 0 ? `
-              <div style="display:flex;gap:8px;">
-                <select id="add-recip-${sheet.id}-${c.id}"
-                  style="flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:inherit;font-size:13px;background:var(--surface);">
-                  <option value="">+ Ajouter un destinataire filtre…</option>
-                  ${unassignedRecips.map(r => `<option value="${r.id}">${r.name}</option>`).join('')}
-                </select>
-                <button class="btn btn-secondary btn-sm"
-                  onclick="addRecipientToSheetClient('${sheet.id}','${c.id}')">Ajouter</button>
-              </div>` : ''}
-            </div>`;
-          });
-        }
-
-        // Add client section
-        html += `<div style="padding:14px 16px;">
-          <div style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:8px;">Ajouter un client expéditeur</div>
-          ${unassigned.length > 0 ? `
-          <div style="display:flex;gap:8px;">
-            <select id="add-client-${sheet.id}"
-              style="flex:1;padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:inherit;font-size:14px;background:var(--surface);">
-              <option value="">— Choisir un client —</option>
-              ${unassigned.map(c => `<option value="${c.id}">${c.name}</option>`).join('')}
-            </select>
-            <button class="btn btn-primary btn-sm" onclick="addClientToSheet('${sheet.id}')">Ajouter</button>
-          </div>` : '<p style="font-size:13px;color:var(--ink2);">Tous les clients sont assignés à cette feuille.</p>'}
-        </div>
-        </div></div>`;
-      });
+      el.innerHTML += '<div class="empty"><div class="empty-icon">🗺️</div><p>Aucune feuille de route.<br>Créez-en une pour segmenter vos exports.</p></div>';
+      return;
     }
-    el.innerHTML = html;
-  } catch(e) { el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
+
+    sheets.forEach(sheet => {
+      const unassigned = clients.filter(c => !sheet.clients.find(sc => sc.id === c.id));
+
+      // Card
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.style.marginBottom = '20px';
+
+      // Card header
+      const header = document.createElement('div');
+      header.className = 'card-header';
+      const title = document.createElement('div');
+      title.className = 'card-title';
+      title.textContent = '🗺️ ' + sheet.name;
+      const btnGroup = document.createElement('div');
+      btnGroup.style.cssText = 'display:flex;gap:8px;';
+      const btnEdit = document.createElement('button');
+      btnEdit.className = 'btn btn-secondary btn-sm';
+      btnEdit.textContent = '✏️';
+      btnEdit.onclick = () => showEditRouteSheetModal(sheet.id, sheet.name);
+      const btnDel = document.createElement('button');
+      btnDel.className = 'btn btn-danger btn-sm';
+      btnDel.textContent = '🗑️';
+      btnDel.onclick = () => deleteRouteSheet(sheet.id, sheet.name);
+      btnGroup.append(btnEdit, btnDel);
+      header.append(title, btnGroup);
+      card.appendChild(header);
+
+      // Card body
+      const body = document.createElement('div');
+      body.className = 'card-body';
+      body.style.padding = '0';
+
+      if (sheet.clients.length === 0) {
+        const empty = document.createElement('p');
+        empty.style.cssText = 'font-size:13px;color:var(--ink2);font-style:italic;padding:16px;';
+        empty.textContent = 'Aucun client assigné';
+        body.appendChild(empty);
+      } else {
+        sheet.clients.forEach(c => {
+          const assignedRecipIds = c.recipients.map(r => r.id);
+          const clientAssignedRecipIds = clientRecipientMap[c.id] || new Set();
+          const unassignedRecips = allRecipients.filter(r =>
+            clientAssignedRecipIds.has(r.id) && !assignedRecipIds.includes(r.id)
+          );
+
+          const clientSection = document.createElement('div');
+          clientSection.style.cssText = 'border-bottom:1px solid var(--border);padding:14px 16px;';
+
+          // Client header row
+          const clientHeader = document.createElement('div');
+          clientHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
+          const clientTitle = document.createElement('div');
+          clientTitle.style.cssText = 'font-weight:700;font-size:15px;';
+          clientTitle.textContent = '📦 ' + c.name;
+          const btnRetirer = document.createElement('button');
+          btnRetirer.style.cssText = "background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;";
+          btnRetirer.textContent = 'Retirer';
+          btnRetirer.onclick = () => removeClientFromSheet(sheet.id, c.id);
+          clientHeader.append(clientTitle, btnRetirer);
+          clientSection.appendChild(clientHeader);
+
+          // Column headers for recipients
+          const colHeader = document.createElement('div');
+          colHeader.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:8px;padding:5px 8px;background:var(--surface2);border-radius:var(--radius-sm);margin-bottom:6px;';
+          colHeader.innerHTML = '<span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);">Destinataire filtré</span>'
+            + '<span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);white-space:nowrap;">Pmt course</span>'
+            + '<span style="font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);white-space:nowrap;">Relais vers</span>';
+          clientSection.appendChild(colHeader);
+
+          if (c.recipients.length === 0) {
+            const noRecip = document.createElement('p');
+            noRecip.style.cssText = 'font-size:13px;color:var(--ink2);font-style:italic;padding:4px 0 8px;';
+            noRecip.textContent = 'Tous les destinataires inclus (sans filtre)';
+            clientSection.appendChild(noRecip);
+          } else {
+            c.recipients.forEach(r => {
+              const recipRow = document.createElement('div');
+              recipRow.style.cssText = 'display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:7px 8px;border-radius:var(--radius-sm);background:var(--blue-light);margin-bottom:4px;';
+
+              const recipName = document.createElement('span');
+              recipName.style.cssText = 'font-size:14px;font-weight:500;color:var(--blue);';
+              recipName.textContent = r.name;
+
+              const pmtSpan = document.createElement('span');
+              pmtSpan.style.cssText = 'font-size:12px;color:var(--ink2);text-align:center;';
+              pmtSpan.textContent = r.paiement_course ? '✓' : '—';
+
+              // Relay selector + remove button
+              const relayDiv = document.createElement('div');
+              relayDiv.style.cssText = 'display:flex;align-items:center;gap:4px;';
+
+              const relaySelect = document.createElement('select');
+              relaySelect.style.cssText = 'padding:4px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;background:white;';
+              const noOpt = document.createElement('option');
+              noOpt.value = '';
+              noOpt.textContent = '— Aucun —';
+              relaySelect.appendChild(noOpt);
+              sheets.filter(s => s.id !== sheet.id).forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = s.name;
+                if (r.relay_sheet_id === s.id) opt.selected = true;
+                relaySelect.appendChild(opt);
+              });
+              relaySelect.onchange = () => setRelay(sheet.id, c.id, r.id, relaySelect.value);
+
+              const btnRemoveRecip = document.createElement('button');
+              btnRemoveRecip.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--blue);font-size:16px;line-height:1;padding:0;';
+              btnRemoveRecip.textContent = '×';
+              btnRemoveRecip.onclick = () => removeRecipientFromSheetClient(sheet.id, c.id, r.id);
+
+              relayDiv.append(relaySelect, btnRemoveRecip);
+              recipRow.append(recipName, pmtSpan, relayDiv);
+              clientSection.appendChild(recipRow);
+            });
+          }
+
+          // Add recipient dropdown
+          if (unassignedRecips.length > 0) {
+            const addRecipRow = document.createElement('div');
+            addRecipRow.style.cssText = 'display:flex;gap:8px;margin-top:8px;';
+            const sel = document.createElement('select');
+            sel.id = 'add-recip-' + sheet.id + '-' + c.id;
+            sel.style.cssText = 'flex:1;padding:7px 10px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface);';
+            const defOpt = document.createElement('option');
+            defOpt.value = '';
+            defOpt.textContent = '+ Ajouter un destinataire filtre…';
+            sel.appendChild(defOpt);
+            unassignedRecips.forEach(r => {
+              const opt = document.createElement('option');
+              opt.value = r.id;
+              opt.textContent = r.name;
+              sel.appendChild(opt);
+            });
+            const btnAddRecip = document.createElement('button');
+            btnAddRecip.className = 'btn btn-secondary btn-sm';
+            btnAddRecip.textContent = 'Ajouter';
+            btnAddRecip.onclick = () => addRecipientToSheetClient(sheet.id, c.id);
+            addRecipRow.append(sel, btnAddRecip);
+            clientSection.appendChild(addRecipRow);
+          }
+
+          body.appendChild(clientSection);
+        });
+      }
+
+      // Add client section
+      const addClientSection = document.createElement('div');
+      addClientSection.style.padding = '14px 16px';
+      const addClientLabel = document.createElement('div');
+      addClientLabel.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:8px;';
+      addClientLabel.textContent = 'Ajouter un client expéditeur';
+      addClientSection.appendChild(addClientLabel);
+
+      if (unassigned.length > 0) {
+        const addClientRow = document.createElement('div');
+        addClientRow.style.cssText = 'display:flex;gap:8px;';
+        const sel = document.createElement('select');
+        sel.id = 'add-client-' + sheet.id;
+        sel.style.cssText = 'flex:1;padding:8px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;background:var(--surface);';
+        const defOpt = document.createElement('option');
+        defOpt.value = '';
+        defOpt.textContent = '— Choisir un client —';
+        sel.appendChild(defOpt);
+        unassigned.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name;
+          sel.appendChild(opt);
+        });
+        const btnAdd = document.createElement('button');
+        btnAdd.className = 'btn btn-primary btn-sm';
+        btnAdd.textContent = 'Ajouter';
+        btnAdd.onclick = () => addClientToSheet(sheet.id);
+        addClientRow.append(sel, btnAdd);
+        addClientSection.appendChild(addClientRow);
+      } else {
+        const p = document.createElement('p');
+        p.style.cssText = 'font-size:13px;color:var(--ink2);';
+        p.textContent = 'Tous les clients sont assignés.';
+        addClientSection.appendChild(p);
+      }
+
+      body.appendChild(addClientSection);
+      card.appendChild(body);
+      el.appendChild(card);
+    });
+
+  } catch(e) {
+    el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>';
+  }
 }
 
 function showAddRouteSheetModal() {
@@ -1389,12 +1514,22 @@ async function addRecipientToSheetClient(sheetId, clientId) {
 
 async function removeRecipientFromSheetClient(sheetId, clientId, recipientId) {
   try {
-    await api('route-sheets/' + sheetId + '/clients/' + clientId + '/recipients/' + recipientId, {
-      method: 'DELETE'
-    });
+    await api('route-sheets/' + sheetId + '/clients/' + clientId + '/recipients/' + recipientId, { method: 'DELETE' });
     toast('✓ Destinataire retiré'); renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
+
+async function setRelay(sheetId, clientId, recipientId, relaySheetId) {
+  try {
+    await api('route-sheets/' + sheetId + '/clients/' + clientId + '/recipients/' + recipientId, {
+      method: 'PATCH',
+      body: { relay_sheet_id: relaySheetId || null }
+    });
+    toast(relaySheetId ? '✓ Relais défini' : '✓ Relais supprimé');
+    renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
 
 async function exportByRoute() {
   openModal('Export par feuille de route', `
@@ -1417,7 +1552,7 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          const csvRows = buildExportRows(sheet.rows);
+          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width
           const colWidths = csvRows[0].map((_, ci) => ({
@@ -1436,26 +1571,44 @@ async function exportByRoute() {
   ]);
 }
 
-function buildExportRows(rows) {
+function buildExportRows(rows, relayEntries) {
   const byClient = {};
   rows.forEach(o => {
     if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
     byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
-    // Append " \R" to recipient name if paiement_course is true
     const recipLabel = o.recipient_name + (o.paiement_course ? ' \\R' : '');
     byClient[o.client_name].recipients[recipLabel] = o.quantity;
   });
-  const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
-  const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
+
+  const maxRecip = Object.keys(byClient).length > 0
+    ? Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length))
+    : 0;
+  const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
+  const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
   const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
+
   Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
-    while (recipNames.length < maxRecip) recipNames.push('');
+    while (recipNames.length < colCount) recipNames.push('');
     csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
   });
+
+  // Add relay rows if any
+  if (relayEntries && relayEntries.length > 0) {
+    // Header relay row: col A empty, col B "Relais", col C empty, then relay client names
+    const relayNames = relayEntries.map(r => r.client_name);
+    while (relayNames.length < colCount) relayNames.push('');
+    csvRows.push(['', 'Relais', '', ...relayNames]);
+
+    // One detail row per relay client
+    relayEntries.forEach(r => {
+      const detailCols = Array(colCount).fill('');
+      csvRows.push([r.client_name, r.client_address, r.qty, ...detailCols]);
+    });
+  }
+
   return csvRows;
 }
-
 async function renderAdminSettings() {
   const el = document.getElementById('tab-settings');
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
