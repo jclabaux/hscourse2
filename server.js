@@ -890,13 +890,27 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     const sheets = await dbClient.query('SELECT id, name FROM route_sheets ORDER BY position, name');
     const assignments = await dbClient.query('SELECT route_sheet_id, client_id FROM route_sheet_clients');
 
-    // Build sheet -> client_ids map
+    // Build sheet -> client_ids map (deduplicated)
     const sheetClients = {};
     sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set() }; });
-    assignments.rows.forEach(a => { if (sheetClients[a.route_sheet_id]) sheetClients[a.route_sheet_id].clientIds.add(a.client_id); });
+    assignments.rows.forEach(a => {
+      if (sheetClients[a.route_sheet_id]) sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+    });
 
-    // Assigned client IDs
+    // Assigned client IDs (across all sheets)
     const assignedClientIds = new Set(assignments.rows.map(a => a.client_id));
+
+    // Fix: also add clients from route_sheet_client_recipients to their sheet's clientIds
+    // In case a client has recipient filters but wasn't added to route_sheet_clients
+    const rscr_clients = await dbClient.query(
+      'SELECT DISTINCT route_sheet_id, client_id FROM route_sheet_client_recipients'
+    );
+    rscr_clients.rows.forEach(a => {
+      if (sheetClients[a.route_sheet_id]) {
+        sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+        assignedClientIds.add(a.client_id);
+      }
+    });
 
     // Get per-client recipient filters with relay info
     const recipientFilters = await dbClient.query(
