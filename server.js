@@ -20,7 +20,7 @@ async function initDB() {
       CREATE TABLE IF NOT EXISTS clients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         name TEXT NOT NULL UNIQUE,
-        email TEXT NOT NULL,
+        email TEXT DEFAULT '',
         login_id TEXT UNIQUE,
         password TEXT NOT NULL DEFAULT '1234',
         address TEXT DEFAULT '',
@@ -28,6 +28,16 @@ async function initDB() {
         blocked BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Migration: email can now be empty, login_id required if no email
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'clients_email_or_loginid'
+        ) THEN
+          ALTER TABLE clients
+            ADD CONSTRAINT clients_email_or_loginid
+            CHECK (email <> '' OR login_id IS NOT NULL);
+        END IF;
+      END $$;
       -- Migration: add unique constraint on name if not exists
       DO $$ BEGIN
         IF NOT EXISTS (
@@ -220,14 +230,14 @@ app.post('/api/auth/login', async (req, res) => {
     }
     // Accept login_id (unique) or email as identifier
     const identifier = email.trim();
-    // Try login_id first (unique), then email
+    // Try login_id first (unique), then email (only if non-empty)
     let r = await pool.query(
       'SELECT id, name, email, login_id, password, address, phone, blocked FROM clients WHERE LOWER(login_id) = LOWER($1) LIMIT 1',
       [identifier]
     );
-    if (r.rows.length === 0) {
+    if (r.rows.length === 0 && identifier.includes('@')) {
       r = await pool.query(
-        'SELECT id, name, email, login_id, password, address, phone, blocked FROM clients WHERE LOWER(email) = LOWER($1) LIMIT 1',
+        'SELECT id, name, email, login_id, password, address, phone, blocked FROM clients WHERE LENGTH(email) > 0 AND LOWER(email) = LOWER($1) LIMIT 1',
         [identifier]
       );
     }
@@ -245,12 +255,13 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/change-password', async (req, res) => {
   const { email, oldPassword, newPassword } = req.body;
   try {
+    const cpIdentifier = email.trim();
     let r = await pool.query(
-      'SELECT id, password FROM clients WHERE LOWER(login_id) = LOWER($1) LIMIT 1', [email]
+      'SELECT id, password FROM clients WHERE LOWER(login_id) = LOWER($1) LIMIT 1', [cpIdentifier]
     );
-    if (r.rows.length === 0) {
+    if (r.rows.length === 0 && cpIdentifier.includes('@')) {
       r = await pool.query(
-        'SELECT id, password FROM clients WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]
+        'SELECT id, password FROM clients WHERE LENGTH(email) > 0 AND LOWER(email) = LOWER($1) LIMIT 1', [cpIdentifier]
       );
     }
     const c = r.rows[0];
@@ -297,8 +308,11 @@ app.get('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/clients', requireAdmin, async (req, res) => {
-  const { name, email, login_id, address, phone } = req.body;
+  const { name, login_id, address, phone } = req.body;
+  const email = (req.body.email || '').trim();
   const client = await pool.connect();
+  if (!name) return res.status(400).json({ error: 'Le nom est obligatoire.' });
+  if (!email && !login_id) return res.status(400).json({ error: "Email ou identifiant obligatoire." });
   try {
     await client.query('BEGIN');
     // Create client
@@ -323,7 +337,10 @@ app.post('/api/clients', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/clients/:id', requireAdmin, async (req, res) => {
-  const { name, email, login_id, address, phone } = req.body;
+  const { name, login_id, address, phone } = req.body;
+  const email = (req.body.email || '').trim();
+  if (!name) return res.status(400).json({ error: 'Le nom est obligatoire.' });
+  if (!email && !login_id) return res.status(400).json({ error: "Email ou identifiant obligatoire." });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -705,7 +722,8 @@ app.post('/api/clients/import', requireAdmin, async (req, res) => {
     for (const row of clients) {
       const name = (row.name || '').trim();
       const email = (row.email || '').trim().toLowerCase();
-      if (!name || !email) { errors.push(`Ligne ignorée : nom ou email manquant (${name || '?'})`); continue; }
+      if (!name) { errors.push('Ligne ignorée : nom manquant'); continue; }
+      if (!email && !row.login_id) { errors.push('Ligne ignorée : e-mail ou identifiant manquant (' + name + ')'); continue; }
       try {
         const r = await dbClient.query(
           "INSERT INTO clients (name, email, password) VALUES ($1, $2, '1234') RETURNING id, name, email",
@@ -981,16 +999,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     await dbClient.query('DELETE FROM orders WHERE quantity > 0');
     await dbClient.query('COMMIT');
 
-    // Debug logs
-    console.log('[export-by-route] total orders:', orders.rows.length);
-    console.log('[export-by-route] order client_ids:', orders.rows.map(o => o.client_id));
-    console.log('[export-by-route] sheets:', sheets.rows.map(s => s.name));
-    console.log('[export-by-route] assignments:', assignments.rows.length);
-    console.log('[export-by-route] assignment client_ids:', assignments.rows.map(a => a.client_id));
-    Object.entries(sheetClients).forEach(([sid, s]) => {
-      console.log('[export-by-route] sheet', s.name, 'clientIds:', [...s.clientIds]);
-    });
-    result.forEach(r => console.log('[export-by-route] sheet', r.name, '-> rows:', r.rows.length, 'relays:', r.relayEntries.length));
+
 
     res.json({ sheets: result });
   } catch(e) {
