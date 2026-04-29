@@ -111,18 +111,10 @@ async function initDB() {
         recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
         quantity INTEGER NOT NULL DEFAULT 0,
         comment TEXT DEFAULT '',
-        retour BOOLEAN NOT NULL DEFAULT FALSE,
         ordered_at TIMESTAMPTZ DEFAULT NOW(),
         month_label TEXT NOT NULL,
         UNIQUE(client_id, recipient_id)
       );
-      -- Migration: add retour column if not exists
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-          WHERE table_name='orders' AND column_name='retour') THEN
-          ALTER TABLE orders ADD COLUMN retour BOOLEAN NOT NULL DEFAULT FALSE;
-        END IF;
-      END $$;
 
       CREATE TABLE IF NOT EXISTS order_history (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -133,18 +125,10 @@ async function initDB() {
         recipient_name TEXT NOT NULL,
         quantity INTEGER NOT NULL,
         comment TEXT DEFAULT '',
-        retour BOOLEAN NOT NULL DEFAULT FALSE,
         ordered_at TIMESTAMPTZ,
         exported_at TIMESTAMPTZ DEFAULT NOW(),
         month_label TEXT NOT NULL
       );
-      -- Migration: add retour to order_history if not exists
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-          WHERE table_name='order_history' AND column_name='retour') THEN
-          ALTER TABLE order_history ADD COLUMN retour BOOLEAN NOT NULL DEFAULT FALSE;
-        END IF;
-      END $$;
       -- Migration: add client_address to history if not exists
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='order_history' AND column_name='client_address') THEN
@@ -544,7 +528,7 @@ app.delete('/api/assignments', requireAdmin, async (req, res) => {
 app.get('/api/orders/client/:clientId', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT o.id, o.recipient_id, o.quantity, o.comment, o.retour, o.ordered_at,
+      `SELECT o.id, o.recipient_id, o.quantity, o.comment, o.ordered_at,
               r.name as recipient_name
        FROM orders o
        JOIN recipients r ON r.id = o.recipient_id
@@ -560,18 +544,17 @@ app.get('/api/orders/client/:clientId', async (req, res) => {
 app.post('/api/orders', async (req, res) => {
   const { client_id, recipient_id, comment } = req.body;
   const quantity = parseInt(req.body.quantity) || 0;
-  const retour = req.body.retour || false;
   const ml = monthLabel();
   try {
     if (quantity <= 0) {
       await pool.query('DELETE FROM orders WHERE client_id=$1 AND recipient_id=$2', [client_id, recipient_id]);
     } else {
       await pool.query(
-        `INSERT INTO orders (client_id, recipient_id, quantity, comment, retour, month_label)
-         VALUES ($1,$2,$3,$4,$5,$6)
+        `INSERT INTO orders (client_id, recipient_id, quantity, comment, month_label)
+         VALUES ($1,$2,$3,$4,$5)
          ON CONFLICT (client_id, recipient_id)
-         DO UPDATE SET quantity=EXCLUDED.quantity, comment=EXCLUDED.comment, retour=EXCLUDED.retour, ordered_at=NOW(), month_label=EXCLUDED.month_label`,
-        [client_id, recipient_id, quantity, comment || '', retour, ml]
+         DO UPDATE SET quantity=EXCLUDED.quantity, comment=EXCLUDED.comment, ordered_at=NOW(), month_label=EXCLUDED.month_label`,
+        [client_id, recipient_id, quantity, comment || '', ml]
       );
     }
     res.json({ success: true });
@@ -583,7 +566,7 @@ app.post('/api/orders', async (req, res) => {
 app.get('/api/orders/all', requireAdmin, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT o.id, o.quantity, o.comment, o.retour, o.ordered_at, o.month_label,
+      `SELECT o.id, o.quantity, o.comment, o.ordered_at, o.month_label,
               c.id as client_id, c.name as client_name, c.address as client_address,
               rec.id as recipient_id, rec.name as recipient_name
        FROM orders o
@@ -904,15 +887,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
     // Get all orders with paiement_course from client_recipients
     const orders = await dbClient.query(
-      `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.retour, o.ordered_at, o.month_label,
-              c.id as client_id_val, c.name as client_name, c.address as client_address,
-              r.id as recipient_id_val, r.name as recipient_name,
-              rc.name as recipient_client_name, rc.address as recipient_client_address,
+      `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.ordered_at, o.month_label,
+              c.name as client_name, c.address as client_address,
+              r.name as recipient_name,
               COALESCE(cr.paiement_course, false) as paiement_course
        FROM orders o
        JOIN clients c ON c.id = o.client_id
        JOIN recipients r ON r.id = o.recipient_id
-       LEFT JOIN clients rc ON rc.id = r.client_id
        LEFT JOIN client_recipients cr ON cr.client_id = o.client_id AND cr.recipient_id = o.recipient_id
        WHERE o.quantity > 0
        ORDER BY c.name, r.name`
@@ -977,20 +958,6 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         return !matchingFilter.relay_sheet_id; // exclude if relayed to another sheet
       });
 
-      // Find retour orders for this sheet:
-      // Orders where the RECIPIENT belongs to a client in this sheet
-      // and retour=true (recipient sends back to original client)
-      const retourOrders = orders.rows.filter(o => {
-        if (!o.retour) return false;
-        // Find if the recipient's client_id is in this sheet
-        return sheet.clientIds.has(o.recipient_id_val) ||
-          (o.recipient_client_name && sheetOrders.some(so => so.client_name === o.recipient_client_name)) ||
-          [...sheet.clientIds].some(cid => {
-            // Check if recipient's underlying client is in this sheet
-            return o.recipient_id_val && cid === o.recipient_id_val;
-          });
-      });
-
       // Find relay orders for this sheet: orders from other sheets where relay_sheet_id = sheetId
       const relayEntries = [];
       recipientFilters.rows
@@ -1012,7 +979,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           }
         });
 
-      result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders });
+      result.push({ name: sheet.name, rows: sheetOrders, relayEntries });
     }
 
     // "Autres" — clients with orders but not in any sheet
@@ -1024,9 +991,9 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     // Move all to history & delete
     for (const o of orders.rows) {
       await dbClient.query(
-        `INSERT INTO order_history (client_id, client_name, client_address, recipient_id, recipient_name, quantity, comment, retour, ordered_at, month_label)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [o.client_id, o.client_name, o.client_address || '', o.recipient_id, o.recipient_name, o.quantity, o.comment, o.retour || false, o.ordered_at, o.month_label]
+        `INSERT INTO order_history (client_id, client_name, client_address, recipient_id, recipient_name, quantity, comment, ordered_at, month_label)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [o.client_id, o.client_name, o.client_address || '', o.recipient_id, o.recipient_name, o.quantity, o.comment, o.ordered_at, o.month_label]
       );
     }
     await dbClient.query('DELETE FROM orders WHERE quantity > 0');
