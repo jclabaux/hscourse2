@@ -454,7 +454,7 @@ async function renderClientRecipients() {
       api('orders/client/' + currentUser.id)
     ]);
     recipientOrders = {};
-    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty: o.quantity, comment: o.comment || '' }; });
+    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty: o.quantity, comment: o.comment || '', retour: o.retour || false }; });
 
     if (recipients.length === 0) {
       container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>Aucun destinataire assigné.<br>Cliquez sur « Ajouter » pour en créer un.</p></div>';
@@ -498,6 +498,13 @@ async function renderClientRecipients() {
           </div>
           <div class="detail-label">Commentaire</div>
           <textarea class="comment-input" id="comment-${r.id.replace(/-/g,'')}" placeholder="Informations complémentaires…" onchange="setComment('${r.id}', this.value)">${o.comment || ''}</textarea>
+              <div class="detail-label">Retour</div>
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
+                <input type="checkbox" id="retour-${r.id.replace(/-/g,'')}" ${o.retour ? 'checked' : ''}
+                  onchange="setRetour('${r.id}', this.checked)"
+                  style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer;">
+                <span style="font-size:13px;color:var(--ink2);">Colis retour</span>
+              </label>
         </div>
 `;
 
@@ -593,8 +600,14 @@ function setQtyInput(recipientId, val) {
 }
 
 function setComment(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
   recipientOrders[recipientId].comment = val;
+  saveOrder(recipientId, true);
+}
+
+function setRetour(recipientId, val) {
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
+  recipientOrders[recipientId].retour = val;
   saveOrder(recipientId, true);
 }
 
@@ -605,7 +618,8 @@ async function saveOrder(recipientId, silent = false) {
       client_id: currentUser.id,
       recipient_id: recipientId,
       quantity: parseInt(o.qty) || 0,
-      comment: o.comment || ''
+      comment: o.comment || '',
+      retour: o.retour || false
     }});
     if (!silent) toast('✓ Enregistré');
   } catch(e) { toast('❌ ' + e.message); }
@@ -1554,7 +1568,7 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || []);
+          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width
           const colWidths = csvRows[0].map((_, ci) => ({
@@ -1573,7 +1587,7 @@ async function exportByRoute() {
   ]);
 }
 
-function buildExportRows(rows, relayEntries) {
+function buildExportRows(rows, relayEntries, retourOrders) {
   const byClient = {};
   rows.forEach(o => {
     if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
@@ -1597,15 +1611,27 @@ function buildExportRows(rows, relayEntries) {
 
   // Add relay rows if any
   if (relayEntries && relayEntries.length > 0) {
-    // Header relay row: col A empty, col B "Relais", col C empty, then relay client names
     const relayNames = relayEntries.map(r => r.client_name);
     while (relayNames.length < colCount) relayNames.push('');
     csvRows.push(['', 'Relais', '', ...relayNames]);
-
-    // One detail row per relay client
     relayEntries.forEach(r => {
       const detailCols = Array(colCount).fill('');
       csvRows.push([r.client_name, r.client_address, r.qty, ...detailCols]);
+    });
+  }
+
+  // Add retour rows if any (appear as normal rows but with sender/recipient inverted)
+  if (retourOrders && retourOrders.length > 0) {
+    retourOrders.forEach(o => {
+      // Recipient becomes the sender, original client becomes the recipient
+      const recipCols = Array(Math.max(colCount, 1)).fill('');
+      recipCols[0] = o.client_name + (o.paiement_course ? ' \\R' : '');
+      csvRows.push([
+        o.recipient_client_name || o.recipient_name,
+        o.recipient_client_address || '',
+        o.quantity,
+        ...recipCols
+      ]);
     });
   }
 
