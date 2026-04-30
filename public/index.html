@@ -112,9 +112,9 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
 
 /* ── RECIPIENTS TABLE ── */
 .recipients-table { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
-.table-header { display: grid; grid-template-columns: 1fr 80px 48px; gap: 0; background: var(--surface2); border-bottom: 1px solid var(--border); padding: 10px 16px; }
+.table-header { display: grid; grid-template-columns: 1fr 60px 80px 48px; gap: 0; background: var(--surface2); border-bottom: 1px solid var(--border); padding: 10px 16px; }
 .th { font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--ink2); }
-.recipient-row { display: grid; grid-template-columns: 1fr 80px 48px; gap: 0; padding: 0; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; align-items: center; user-select: none; position: relative; }
+.recipient-row { display: grid; grid-template-columns: 1fr 60px 80px 48px; gap: 0; padding: 0; border-bottom: 1px solid var(--border); cursor: pointer; transition: background 0.15s; align-items: center; user-select: none; position: relative; }
 .recipient-row:last-child { border-bottom: none; }
 .recipient-row:hover { background: var(--surface2); }
 .recipient-row.selected { background: var(--blue-light); }
@@ -463,7 +463,7 @@ async function renderClientRecipients() {
 
     const table = document.createElement('div');
     table.className = 'recipients-table';
-    table.innerHTML = `<div class="table-header"><div class="th">Destinataire</div><div class="th" style="text-align:center;">Colis</div><div class="th"></div></div>`;
+    table.innerHTML = `<div class="table-header"><div class="th">Destinataire</div><div class="th" style="text-align:center;">Retour</div><div class="th" style="text-align:center;">Colis</div><div class="th"></div></div>`;
 
     recipients.forEach(r => {
       const o = recipientOrders[r.id] || { qty: 0, comment: '' };
@@ -475,15 +475,43 @@ async function renderClientRecipients() {
       rowEl.id = rowId;
       rowEl.dataset.recipientId = r.id;
 
-      rowEl.innerHTML = `
-        <div class="row-main">
-          <div class="row-name">${r.name}</div>
-          ${r.address || r.phone ? '<div class="row-sub">' + [r.address, r.phone].filter(Boolean).join(' · ') + '</div>' : ''}
-        </div>
-        <div class="row-qty">
-          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${o.qty || 0}</div>
-        </div>
-        <div class="row-expand"><span class="expand-icon">⌄</span></div>`;
+      rowEl.innerHTML = '';
+      const _main = document.createElement('div');
+      _main.className = 'row-main';
+      const _name = document.createElement('div');
+      _name.className = 'row-name';
+      _name.textContent = r.name;
+      _main.appendChild(_name);
+      if (r.address || r.phone) {
+        const _sub = document.createElement('div');
+        _sub.className = 'row-sub';
+        _sub.textContent = [r.address, r.phone].filter(Boolean).join(' · ');
+        _main.appendChild(_sub);
+      }
+      const _retourCell = document.createElement('div');
+      _retourCell.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:14px 8px;';
+      const _retourCb = document.createElement('input');
+      _retourCb.type = 'checkbox';
+      _retourCb.id = 'retour-' + r.id.replace(/-/g, '');
+      _retourCb.checked = o.retour || false;
+      _retourCb.style.cssText = 'width:18px;height:18px;accent-color:var(--blue);cursor:pointer;';
+      _retourCb.addEventListener('click', function(e) { e.stopPropagation(); });
+      _retourCb.addEventListener('change', function() { setRetour(r.id, _retourCb.checked); });
+      _retourCell.appendChild(_retourCb);
+      const _qtyCell = document.createElement('div');
+      _qtyCell.className = 'row-qty';
+      const _badge = document.createElement('div');
+      _badge.className = 'qty-badge';
+      _badge.id = 'badge-' + r.id.replace(/-/g, '');
+      _badge.textContent = o.qty || 0;
+      _qtyCell.appendChild(_badge);
+      const _expandCell = document.createElement('div');
+      _expandCell.className = 'row-expand';
+      const _chevron = document.createElement('span');
+      _chevron.className = 'expand-icon';
+      _chevron.textContent = '⋄';
+      _expandCell.appendChild(_chevron);
+      rowEl.append(_main, _retourCell, _qtyCell, _expandCell);
 
       const detailEl = document.createElement('div');
       detailEl.className = 'row-detail';
