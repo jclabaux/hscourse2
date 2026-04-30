@@ -475,43 +475,15 @@ async function renderClientRecipients() {
       rowEl.id = rowId;
       rowEl.dataset.recipientId = r.id;
 
-      rowEl.innerHTML = '';
-      const _main = document.createElement('div');
-      _main.className = 'row-main';
-      const _name = document.createElement('div');
-      _name.className = 'row-name';
-      _name.textContent = r.name;
-      _main.appendChild(_name);
-      if (r.address || r.phone) {
-        const _sub = document.createElement('div');
-        _sub.className = 'row-sub';
-        _sub.textContent = [r.address, r.phone].filter(Boolean).join(' · ');
-        _main.appendChild(_sub);
-      }
-      const _retourCell = document.createElement('div');
-      _retourCell.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:14px 8px;';
-      const _retourCb = document.createElement('input');
-      _retourCb.type = 'checkbox';
-      _retourCb.id = 'retour-' + r.id.replace(/-/g, '');
-      _retourCb.checked = o.retour || false;
-      _retourCb.style.cssText = 'width:18px;height:18px;accent-color:var(--blue);cursor:pointer;';
-      _retourCb.addEventListener('click', function(e) { e.stopPropagation(); });
-      _retourCb.addEventListener('change', function() { setRetour(r.id, _retourCb.checked); });
-      _retourCell.appendChild(_retourCb);
-      const _qtyCell = document.createElement('div');
-      _qtyCell.className = 'row-qty';
-      const _badge = document.createElement('div');
-      _badge.className = 'qty-badge';
-      _badge.id = 'badge-' + r.id.replace(/-/g, '');
-      _badge.textContent = o.qty || 0;
-      _qtyCell.appendChild(_badge);
-      const _expandCell = document.createElement('div');
-      _expandCell.className = 'row-expand';
-      const _chevron = document.createElement('span');
-      _chevron.className = 'expand-icon';
-      _chevron.textContent = '⋄';
-      _expandCell.appendChild(_chevron);
-      rowEl.append(_main, _retourCell, _qtyCell, _expandCell);
+      rowEl.innerHTML = `
+        <div class="row-main">
+          <div class="row-name">${r.name}</div>
+          ${r.address || r.phone ? '<div class="row-sub">' + [r.address, r.phone].filter(Boolean).join(' · ') + '</div>' : ''}
+        </div>
+        <div class="row-qty">
+          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${o.qty || 0}</div>
+        </div>
+        <div class="row-expand"><span class="expand-icon">⌄</span></div>`;
 
       const detailEl = document.createElement('div');
       detailEl.className = 'row-detail';
@@ -565,6 +537,19 @@ async function renderClientRecipients() {
 
       table.appendChild(rowEl);
       table.appendChild(detailEl);
+      (function() {
+        var rc = document.createElement('div');
+        rc.style.cssText = 'display:flex;align-items:center;justify-content:center;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = 'retour-' + r.id.replace(/-/g, '');
+        cb.checked = o.retour || false;
+        cb.style.cssText = 'width:18px;height:18px;accent-color:var(--blue);cursor:pointer;';
+        cb.addEventListener('click', function(ev) { ev.stopPropagation(); });
+        (function(rid, c) { c.addEventListener('change', function() { setRetour(rid, c.checked); }); })(r.id, cb);
+        rc.appendChild(cb);
+        rowEl.insertBefore(rc, rowEl.querySelector('.row-qty'));
+      })();
     });
     container.innerHTML = '';
     container.appendChild(table);
