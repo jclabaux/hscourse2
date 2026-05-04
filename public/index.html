@@ -537,6 +537,21 @@ async function renderClientRecipients() {
 
       table.appendChild(rowEl);
       table.appendChild(detailEl);
+      (function() {
+        var nameDiv = rowEl.querySelector('.row-name');
+        var label = document.createElement('label');
+        label.style.cssText = 'display:inline-flex;align-items:center;gap:5px;margin-top:3px;cursor:pointer;font-size:12px;color:var(--ink2);';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.id = 'retour-' + r.id.replace(/-/g, '');
+        cb.checked = o.retour || false;
+        cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;';
+        cb.addEventListener('click', function(ev) { ev.stopPropagation(); });
+        (function(rid, c) { c.addEventListener('change', function() { setRetour(rid, c.checked); }); })(r.id, cb);
+        label.appendChild(cb);
+        label.appendChild(document.createTextNode(' Retour'));
+        nameDiv.parentNode.insertBefore(label, nameDiv.nextSibling);
+      })();
     });
     container.innerHTML = '';
     container.appendChild(table);
