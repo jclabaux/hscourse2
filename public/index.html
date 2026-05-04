@@ -550,7 +550,11 @@ async function renderClientRecipients() {
         (function(rid, c) { c.addEventListener('change', function() { setRetour(rid, c.checked); }); })(r.id, cb);
         label.appendChild(cb);
         label.appendChild(document.createTextNode(' Retour'));
-        nameDiv.parentNode.insertBefore(label, nameDiv.nextSibling);
+        label.style.cssText = 'display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:12px;color:var(--ink2);vertical-align:middle;';
+        nameDiv.style.display = 'flex';
+        nameDiv.style.alignItems = 'center';
+        nameDiv.style.flexWrap = 'wrap';
+        nameDiv.appendChild(label);
       })();
     });
     container.innerHTML = '';
