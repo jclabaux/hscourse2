@@ -628,7 +628,29 @@ function setComment(recipientId, val) {
 function setRetour(recipientId, val) {
   if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
   recipientOrders[recipientId].retour = val;
-  saveOrder(recipientId, true);
+  // Auto-select the line with qty=1 when retour is checked
+  if (val && recipientOrders[recipientId].qty === 0) {
+    recipientOrders[recipientId].qty = 1;
+    const key = recipientId.replace(/-/g, '');
+    const badge = document.getElementById('badge-' + key);
+    if (badge) badge.textContent = '1';
+    const row = document.getElementById('row-' + key);
+    if (row) row.classList.add('selected');
+    const qtyInput = document.getElementById('qty-' + key);
+    if (qtyInput) qtyInput.value = '1';
+  }
+  // Auto-deselect if retour unchecked and qty was 1 (set by retour)
+  if (!val && recipientOrders[recipientId].qty === 1) {
+    recipientOrders[recipientId].qty = 0;
+    const key = recipientId.replace(/-/g, '');
+    const badge = document.getElementById('badge-' + key);
+    if (badge) badge.textContent = '0';
+    const row = document.getElementById('row-' + key);
+    if (row) row.classList.remove('selected');
+    const qtyInput = document.getElementById('qty-' + key);
+    if (qtyInput) qtyInput.value = '0';
+  }
+  updateSubmitBar();
 }
 
 function saveOrder(recipientId, silent) {
