@@ -275,6 +275,10 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
         </div>
       </div>
       <div id="recipients-container"></div>
+      <div style="height:80px;"></div>
+    </div>
+    <div id="submit-bar" style="display:none;position:sticky;bottom:0;background:white;padding:14px 20px;box-shadow:0 -4px 20px rgba(0,0,0,0.08);border-top:1px solid var(--border);z-index:50;">
+      <button class="btn btn-primary" style="width:100%;font-size:16px;padding:14px;" onclick="submitAllOrders()">✓ Valider mes commandes</button>
     </div>
   </div>
 
@@ -540,21 +544,18 @@ async function renderClientRecipients() {
       (function() {
         var nameDiv = rowEl.querySelector('.row-name');
         var label = document.createElement('label');
-        label.style.cssText = 'display:inline-flex;align-items:center;gap:5px;margin-top:3px;cursor:pointer;font-size:12px;color:var(--ink2);';
         var cb = document.createElement('input');
         cb.type = 'checkbox';
         cb.id = 'retour-' + r.id.replace(/-/g, '');
         cb.checked = o.retour || false;
-        cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;';
+        cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;margin-left:10px;vertical-align:middle;';
         cb.addEventListener('click', function(ev) { ev.stopPropagation(); });
         (function(rid, c) { c.addEventListener('change', function() { setRetour(rid, c.checked); }); })(r.id, cb);
-        label.appendChild(cb);
-        label.appendChild(document.createTextNode(' Retour'));
-        label.style.cssText = 'display:inline-flex;align-items:center;gap:5px;margin-left:10px;cursor:pointer;font-size:12px;color:var(--ink2);vertical-align:middle;';
+        var txt = document.createTextNode(' Retour');
         nameDiv.style.display = 'flex';
         nameDiv.style.alignItems = 'center';
-        nameDiv.style.flexWrap = 'wrap';
-        nameDiv.appendChild(label);
+        nameDiv.appendChild(cb);
+        nameDiv.appendChild(txt);
       })();
     });
     container.innerHTML = '';
@@ -630,18 +631,38 @@ function setRetour(recipientId, val) {
   saveOrder(recipientId, true);
 }
 
-async function saveOrder(recipientId, silent = false) {
-  const o = recipientOrders[recipientId] || { qty: 0, comment: '' };
+function saveOrder(recipientId, silent) {
+  updateSubmitBar();
+}
+
+async function persistOrder(recipientId) {
+  const o = recipientOrders[recipientId] || { qty: 0, comment: '', retour: false };
+  await api('orders', { method: 'POST', body: {
+    client_id: currentUser.id,
+    recipient_id: recipientId,
+    quantity: parseInt(o.qty) || 0,
+    comment: o.comment || '',
+    retour: o.retour || false
+  }});
+}
+
+function updateSubmitBar() {
+  const hasOrders = Object.values(recipientOrders).some(o => o.qty > 0);
+  const bar = document.getElementById('submit-bar');
+  if (bar) bar.style.display = hasOrders ? 'block' : 'none';
+}
+
+async function submitAllOrders() {
+  const btn = document.querySelector('#submit-bar button');
+  btn.disabled = true; btn.textContent = 'Enregistrement…';
   try {
-    await api('orders', { method: 'POST', body: {
-      client_id: currentUser.id,
-      recipient_id: recipientId,
-      quantity: parseInt(o.qty) || 0,
-      comment: o.comment || '',
-      retour: o.retour || false
-    }});
-    if (!silent) toast('✓ Enregistré');
+    for (const recipientId of Object.keys(recipientOrders)) {
+      await persistOrder(recipientId);
+    }
+    toast('✓ Commandes validées');
+    updateSubmitBar();
   } catch(e) { toast('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '✓ Valider mes commandes'; }
 }
 
 // ── HISTORY MODAL (client) ────────────────────────────────
