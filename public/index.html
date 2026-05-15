@@ -277,9 +277,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
       <div id="recipients-container"></div>
       <div style="height:80px;"></div>
     </div>
-    <div id="submit-bar" style="display:none;position:sticky;bottom:0;background:white;padding:14px 20px;box-shadow:0 -4px 20px rgba(0,0,0,0.08);border-top:1px solid var(--border);z-index:50;">
-      <button class="btn btn-primary" style="width:100%;font-size:16px;padding:14px;" onclick="submitAllOrders()">✓ Valider mes commandes</button>
-    </div>
+    <div id="submit-bar" style="display:none;position:sticky;bottom:0;background:white;padding:14px 20px;box-shadow:0 -4px 20px rgba(0,0,0,0.08);border-top:1px solid var(--border);z-index:50;"><button class="btn btn-primary" style="width:100%;font-size:16px;padding:14px;" onclick="submitAllOrders()">✓ Valider mes commandes</button></div>
   </div>
 
   <!-- ADMIN VIEW -->
@@ -458,7 +456,8 @@ async function renderClientRecipients() {
       api('orders/client/' + currentUser.id)
     ]);
     recipientOrders = {};
-    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty: o.quantity, comment: o.comment || '', retour: o.retour || false }; });
+    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty_normal: o.retour ? 0 : o.quantity, qty_retour: o.retour ? o.quantity : 0, comment: o.comment || '', retour: o.retour || false }; });
+    updateSubmitBar();
 
     if (recipients.length === 0) {
       container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>Aucun destinataire assigné.<br>Cliquez sur « Ajouter » pour en créer un.</p></div>';
@@ -471,7 +470,7 @@ async function renderClientRecipients() {
 
     recipients.forEach(r => {
       const o = recipientOrders[r.id] || { qty: 0, comment: '' };
-      const isSelected = o.qty > 0;
+      const isSelected = (o.qty_normal||0)+(o.qty_retour||0) > 0;
       const rowId = 'row-' + r.id.replace(/-/g, '');
 
       const rowEl = document.createElement('div');
@@ -485,7 +484,7 @@ async function renderClientRecipients() {
           ${r.address || r.phone ? '<div class="row-sub">' + [r.address, r.phone].filter(Boolean).join(' · ') + '</div>' : ''}
         </div>
         <div class="row-qty">
-          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${o.qty || 0}</div>
+          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${(o.qty_normal||0)+(o.qty_retour||0)}</div>
         </div>
         <div class="row-expand"><span class="expand-icon">⌄</span></div>`;
 
@@ -497,7 +496,7 @@ async function renderClientRecipients() {
           <div class="detail-label">Quantité</div>
           <div class="qty-controls">
             <button class="qty-btn" onclick="adjustQty('${r.id}', -1)">−</button>
-            <input type="number" class="qty-input" id="qty-${r.id.replace(/-/g,'')}" value="${o.qty || 0}" min="0" max="999" onchange="setQtyInput('${r.id}', this.value)">
+            <input type="number" class="qty-input" id="qty-${r.id.replace(/-/g,'')}" value="${o.qty_normal || 0}" min="0" max="999" onchange="setQtyInput('${r.id}', this.value)">
             <button class="qty-btn" onclick="adjustQty('${r.id}', 1)">+</button>
           </div>
           <div class="detail-label">Commentaire</div>
@@ -541,22 +540,21 @@ async function renderClientRecipients() {
 
       table.appendChild(rowEl);
       table.appendChild(detailEl);
-      (function() {
+      (function(rid, oRef) {
         var nameDiv = rowEl.querySelector('.row-name');
-        var label = document.createElement('label');
         var cb = document.createElement('input');
         cb.type = 'checkbox';
-        cb.id = 'retour-' + r.id.replace(/-/g, '');
-        cb.checked = o.retour || false;
+        cb.id = 'retour-' + rid.replace(/-/g, '');
+        cb.checked = oRef.retour || false;
         cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;margin-left:10px;vertical-align:middle;';
         cb.addEventListener('click', function(ev) { ev.stopPropagation(); });
-        (function(rid, c) { c.addEventListener('change', function() { setRetour(rid, c.checked); }); })(r.id, cb);
+        cb.addEventListener('change', function() { setRetour(rid, cb.checked); });
         var txt = document.createTextNode(' Retour');
         nameDiv.style.display = 'flex';
         nameDiv.style.alignItems = 'center';
         nameDiv.appendChild(cb);
         nameDiv.appendChild(txt);
-      })();
+      })(r.id, o);
     });
     container.innerHTML = '';
     container.appendChild(table);
@@ -566,24 +564,13 @@ async function renderClientRecipients() {
 }
 
 function toggleSelect(recipientId) {
-  const key = recipientId.replace(/-/g, '');
-  const rowEl = document.getElementById('row-' + key);
-  const badge = document.getElementById('badge-' + key);
-  const qtyInput = document.getElementById('qty-' + key);
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
-  const o = recipientOrders[recipientId];
-  if (o.qty > 0) {
-    o.qty = 0;
-    rowEl.classList.remove('selected');
-    badge.textContent = '0';
-    if (qtyInput) qtyInput.value = '0';
-  } else {
-    o.qty = 1;
-    rowEl.classList.add('selected');
-    badge.textContent = '1';
-    if (qtyInput) qtyInput.value = '1';
-  }
-  saveOrder(recipientId, true);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  var o = recipientOrders[recipientId];
+  o.qty_normal = (o.qty_normal||0) === 0 ? 1 : 0;
+  var key = recipientId.replace(/-/g, '');
+  var qtyInput = document.getElementById('qty-' + key);
+  if (qtyInput) qtyInput.value = o.qty_normal;
+  refreshRowUI(recipientId);
 }
 
 function toggleDetail(recipientId) {
@@ -597,94 +584,73 @@ function toggleDetail(recipientId) {
 }
 
 function adjustQty(recipientId, delta) {
-  const key = recipientId.replace(/-/g, '');
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
-  const o = recipientOrders[recipientId];
-  o.qty = Math.max(0, (o.qty || 0) + delta);
-  document.getElementById('qty-' + key).value = o.qty;
-  document.getElementById('badge-' + key).textContent = o.qty;
-  const rowEl = document.getElementById('row-' + key);
-  if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
-  saveOrder(recipientId, true);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  var o = recipientOrders[recipientId];
+  o.qty_normal = Math.max(0, (o.qty_normal||0) + delta);
+  var key = recipientId.replace(/-/g, '');
+  var inp = document.getElementById('qty-' + key);
+  if (inp) inp.value = o.qty_normal;
+  refreshRowUI(recipientId);
 }
 
 function setQtyInput(recipientId, val) {
-  const key = recipientId.replace(/-/g, '');
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
-  const o = recipientOrders[recipientId];
-  o.qty = Math.max(0, parseInt(val) || 0);
-  document.getElementById('badge-' + key).textContent = o.qty;
-  const rowEl = document.getElementById('row-' + key);
-  if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
-  saveOrder(recipientId, true);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  var o = recipientOrders[recipientId];
+  o.qty_normal = Math.max(0, parseInt(val) || 0);
+  refreshRowUI(recipientId);
 }
 
 function setComment(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
   recipientOrders[recipientId].comment = val;
   saveOrder(recipientId, true);
 }
 
 function setRetour(recipientId, val) {
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  var o = recipientOrders[recipientId];
+  o.retour = val;
+  o.qty_retour = val ? 1 : 0;
+  refreshRowUI(recipientId);
+}
+
+function setRetour(recipientId, val) {
   if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
   recipientOrders[recipientId].retour = val;
-  // Auto-select the line with qty=1 when retour is checked
-  if (val && recipientOrders[recipientId].qty === 0) {
-    recipientOrders[recipientId].qty = 1;
-    const key = recipientId.replace(/-/g, '');
-    const badge = document.getElementById('badge-' + key);
-    if (badge) badge.textContent = '1';
-    const row = document.getElementById('row-' + key);
-    if (row) row.classList.add('selected');
-    const qtyInput = document.getElementById('qty-' + key);
-    if (qtyInput) qtyInput.value = '1';
-  }
-  // Auto-deselect if retour unchecked and qty was 1 (set by retour)
-  if (!val && recipientOrders[recipientId].qty === 1) {
-    recipientOrders[recipientId].qty = 0;
-    const key = recipientId.replace(/-/g, '');
-    const badge = document.getElementById('badge-' + key);
-    if (badge) badge.textContent = '0';
-    const row = document.getElementById('row-' + key);
-    if (row) row.classList.remove('selected');
-    const qtyInput = document.getElementById('qty-' + key);
-    if (qtyInput) qtyInput.value = '0';
-  }
-  updateSubmitBar();
+  saveOrder(recipientId, true);
 }
 
-function saveOrder(recipientId, silent) {
-  updateSubmitBar();
-}
-
-async function persistOrder(recipientId) {
-  const o = recipientOrders[recipientId] || { qty: 0, comment: '', retour: false };
-  await api('orders', { method: 'POST', body: {
-    client_id: currentUser.id,
-    recipient_id: recipientId,
-    quantity: parseInt(o.qty) || 0,
-    comment: o.comment || '',
-    retour: o.retour || false
-  }});
-}
+function totalQty(o) { return (o.qty_normal||0) + (o.qty_retour||0); }
 
 function updateSubmitBar() {
-  const hasOrders = Object.values(recipientOrders).some(o => o.qty > 0);
-  const bar = document.getElementById('submit-bar');
+  var hasOrders = Object.values(recipientOrders).some(function(o) { return totalQty(o) > 0; });
+  var bar = document.getElementById('submit-bar');
   if (bar) bar.style.display = hasOrders ? 'block' : 'none';
 }
 
-async function submitAllOrders() {
-  const btn = document.querySelector('#submit-bar button');
-  btn.disabled = true; btn.textContent = 'Enregistrement…';
+function refreshRowUI(rid) {
+  var key = rid.replace(/-/g, '');
+  var o = recipientOrders[rid] || {};
+  var total = totalQty(o);
+  var badge = document.getElementById('badge-' + key);
+  if (badge) badge.textContent = total;
+  var row = document.getElementById('row-' + key);
+  if (row) { if (total > 0) row.classList.add('selected'); else row.classList.remove('selected'); }
+  updateSubmitBar();
+}
+
+async function saveOrder(recipientId, silent) {
+  const o = recipientOrders[recipientId] || { qty: 0, comment: '' };
   try {
-    for (const recipientId of Object.keys(recipientOrders)) {
-      await persistOrder(recipientId);
-    }
-    toast('✓ Commandes validées');
-    updateSubmitBar();
+    await api('orders', { method: 'POST', body: {
+      client_id: currentUser.id,
+      recipient_id: recipientId,
+      quantity: parseInt(o.qty) || 0,
+      comment: o.comment || '',
+      retour: o.retour || false
+    }});
+    if (!silent) toast('✓ Enregistré');
   } catch(e) { toast('❌ ' + e.message); }
-  finally { btn.disabled = false; btn.textContent = '✓ Valider mes commandes'; }
 }
 
 // ── HISTORY MODAL (client) ────────────────────────────────
