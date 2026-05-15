@@ -629,6 +629,33 @@ function updateSubmitBar() {
   if (bar) bar.style.display = hasOrders ? 'block' : 'none';
 }
 
+async function persistOrder(recipientId) {
+  var o = recipientOrders[recipientId] || { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  await api('orders', { method: 'POST', body: {
+    client_id: currentUser.id,
+    recipient_id: recipientId,
+    quantity: totalQty(o),
+    comment: o.comment || '',
+    retour: o.retour || false
+  }});
+}
+
+async function submitAllOrders() {
+  var btn = document.querySelector('#submit-bar button');
+  if (!btn) return;
+  btn.disabled = true; btn.textContent = 'Enregistrement…';
+  try {
+    var keys = Object.keys(recipientOrders);
+    for (var i = 0; i < keys.length; i++) {
+      if (totalQty(recipientOrders[keys[i]]) > 0) {
+        await persistOrder(keys[i]);
+      }
+    }
+    toast('✓ Commandes validées');
+  } catch(e) { toast('❌ ' + e.message); }
+  finally { btn.disabled = false; btn.textContent = '✓ Valider mes commandes'; }
+}
+
 function refreshRowUI(rid) {
   var key = rid.replace(/-/g, '');
   var o = recipientOrders[rid] || {};
