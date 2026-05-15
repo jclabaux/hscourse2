@@ -469,7 +469,7 @@ async function renderClientRecipients() {
     table.innerHTML = `<div class="table-header"><div class="th">Destinataire</div><div class="th" style="text-align:center;">Colis</div><div class="th"></div></div>`;
 
     recipients.forEach(r => {
-      const o = recipientOrders[r.id] || { qty: 0, comment: '' };
+      const o = recipientOrders[r.id] || { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
       const isSelected = (o.qty_normal||0)+(o.qty_retour||0) > 0;
       const rowId = 'row-' + r.id.replace(/-/g, '');
 
@@ -501,13 +501,7 @@ async function renderClientRecipients() {
           </div>
           <div class="detail-label">Commentaire</div>
           <textarea class="comment-input" id="comment-${r.id.replace(/-/g,'')}" placeholder="Informations complémentaires…" onchange="setComment('${r.id}', this.value)">${o.comment || ''}</textarea>
-              <div class="detail-label">Retour</div>
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;">
-                <input type="checkbox" id="retour-${r.id.replace(/-/g,'')}" ${o.retour ? 'checked' : ''}
-                  onchange="setRetour('${r.id}', this.checked)"
-                  style="width:18px;height:18px;accent-color:var(--blue);cursor:pointer;">
-                <span style="font-size:13px;color:var(--ink2);">Colis retour</span>
-              </label>
+              
         </div>
 `;
 
