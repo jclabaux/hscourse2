@@ -1376,7 +1376,24 @@ async function renderRouteSheets() {
           btnRetirer.style.cssText = "background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;";
           btnRetirer.textContent = 'Retirer';
           btnRetirer.onclick = () => removeClientFromSheet(sheet.id, c.id);
-          clientHeader.append(clientTitle, btnRetirer);
+          // Move up/down buttons
+          var btnUp = document.createElement('button');
+          btnUp.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
+          btnUp.textContent = '▲';
+          btnUp.title = 'Monter';
+          (function(sid, cid) { btnUp.addEventListener('click', function() { moveClientInSheet(sid, cid, 'up'); }); })(sheet.id, c.id);
+
+          var btnDown = document.createElement('button');
+          btnDown.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
+          btnDown.textContent = '▼';
+          btnDown.title = 'Descendre';
+          (function(sid, cid) { btnDown.addEventListener('click', function() { moveClientInSheet(sid, cid, 'down'); }); })(sheet.id, c.id);
+
+          var orderBtns = document.createElement('div');
+          orderBtns.style.cssText = 'display:flex;gap:4px;';
+          orderBtns.append(btnUp, btnDown);
+
+          clientHeader.append(clientTitle, orderBtns, btnRetirer);
           clientSection.appendChild(clientHeader);
 
           // Column headers for recipients
@@ -1562,6 +1579,27 @@ async function addClientToSheet(sheetId) {
   try {
     await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId } });
     toast('✓ Client ajouté'); renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function moveClientInSheet(sheetId, clientId, direction) {
+  try {
+    const sheets = await api('route-sheets');
+    const sheet = sheets.find(s => s.id === sheetId);
+    if (!sheet) return;
+    const clients = sheet.clients;
+    const idx = clients.findIndex(c => c.id === clientId);
+    if (idx < 0) return;
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= clients.length) return;
+    // Swap positions
+    const clientA = clients[idx];
+    const clientB = clients[newIdx];
+    await Promise.all([
+      api('route-sheets/' + sheetId + '/clients/' + clientA.id + '/position', { method: 'PATCH', body: { position: newIdx } }),
+      api('route-sheets/' + sheetId + '/clients/' + clientB.id + '/position', { method: 'PATCH', body: { position: idx } })
+    ]);
+    renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
 

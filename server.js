@@ -168,8 +168,16 @@ async function initDB() {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE,
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL DEFAULT 0,
         UNIQUE(route_sheet_id, client_id)
       );
+      -- Migration: add position to route_sheet_clients if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='route_sheet_clients' AND column_name='position') THEN
+          ALTER TABLE route_sheet_clients ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
+        END IF;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS route_sheet_client_recipients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -773,10 +781,10 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
   try {
     const sheets = await pool.query('SELECT id, name, position FROM route_sheets ORDER BY position, name');
     const assignments = await pool.query(
-      `SELECT rsc.route_sheet_id, rsc.client_id, c.name as client_name
+      `SELECT rsc.route_sheet_id, rsc.client_id, rsc.position, c.name as client_name
        FROM route_sheet_clients rsc
        JOIN clients c ON c.id = rsc.client_id
-       ORDER BY c.name`
+       ORDER BY rsc.position, c.name`
     );
     const recipientAssignments = await pool.query(
       `SELECT rscr.route_sheet_id, rscr.client_id, rscr.recipient_id, rscr.relay_sheet_id,
@@ -838,9 +846,24 @@ app.delete('/api/route-sheets/:id', requireAdmin, async (req, res) => {
 app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
   const { client_id } = req.body;
   try {
+    const maxPos = await pool.query(
+      'SELECT COALESCE(MAX(position),0)+1 as pos FROM route_sheet_clients WHERE route_sheet_id=$1',
+      [req.params.id]
+    );
     await pool.query(
-      'INSERT INTO route_sheet_clients (route_sheet_id, client_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-      [req.params.id, client_id]
+      'INSERT INTO route_sheet_clients (route_sheet_id, client_id, position) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
+      [req.params.id, client_id, maxPos.rows[0].pos]
+    );
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, async (req, res) => {
+  const { position } = req.body;
+  try {
+    await pool.query(
+      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3',
+      [position, req.params.id, req.params.clientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
