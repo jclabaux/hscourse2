@@ -535,19 +535,31 @@ async function renderClientRecipients() {
       table.appendChild(rowEl);
       table.appendChild(detailEl);
       (function(rid, oRef) {
-        var nameDiv = rowEl.querySelector('.row-name');
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = 'retour-' + rid.replace(/-/g, '');
-        cb.checked = oRef.retour || false;
-        cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;margin-left:10px;vertical-align:middle;';
-        cb.addEventListener('click', function(ev) { ev.stopPropagation(); });
-        cb.addEventListener('change', function() { setRetour(rid, cb.checked); });
-        var txt = document.createTextNode(' Retour');
-        nameDiv.style.display = 'flex';
-        nameDiv.style.alignItems = 'center';
-        nameDiv.appendChild(cb);
-        nameDiv.appendChild(txt);
+        // Use setTimeout to ensure DOM is ready after innerHTML set
+        setTimeout(function() {
+          var rowEl2 = document.getElementById('row-' + rid.replace(/-/g,''));
+          if (!rowEl2) { console.warn('[retour] rowEl not found for', rid); return; }
+          var nameDiv = rowEl2.querySelector('.row-name');
+          if (!nameDiv) { console.warn('[retour] nameDiv not found'); return; }
+          var cb = document.createElement('input');
+          cb.type = 'checkbox';
+          cb.id = 'retour-' + rid.replace(/-/g, '');
+          cb.checked = oRef.retour || false;
+          cb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;margin-left:10px;vertical-align:middle;flex-shrink:0;';
+          cb.addEventListener('click', function(ev) { ev.stopPropagation(); ev.stopImmediatePropagation(); });
+          cb.addEventListener('change', function() {
+            console.log('[retour cb change]', rid, cb.checked);
+            setRetour(rid, cb.checked);
+          });
+          var lbl = document.createElement('label');
+          lbl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:10px;cursor:pointer;font-size:12px;color:var(--ink2);';
+          lbl.appendChild(cb);
+          lbl.appendChild(document.createTextNode('Retour'));
+          lbl.addEventListener('click', function(ev) { ev.stopPropagation(); });
+          nameDiv.style.display = 'flex';
+          nameDiv.style.alignItems = 'center';
+          nameDiv.appendChild(lbl);
+        }, 0);
       })(r.id, o);
     });
     container.innerHTML = '';
