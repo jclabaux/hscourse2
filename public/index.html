@@ -605,6 +605,7 @@ function setRetour(recipientId, val) {
   var o = recipientOrders[recipientId];
   o.retour = val;
   o.qty_retour = val ? 1 : 0;
+  console.log('[setRetour] rid:', recipientId, 'val:', val, 'o:', JSON.stringify(o));
   refreshRowUI(recipientId);
 }
 
@@ -626,6 +627,7 @@ function refreshRowUI(rid) {
   var key = rid.replace(/-/g, '');
   var o = recipientOrders[rid] || {};
   var total = totalQty(o);
+  console.log('[refreshRowUI] rid:', rid, 'key:', key, 'total:', total, 'badge el:', !!document.getElementById('badge-' + key));
   var badge = document.getElementById('badge-' + key);
   if (badge) badge.textContent = total;
   var row = document.getElementById('row-' + key);
