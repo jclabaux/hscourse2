@@ -1697,7 +1697,8 @@ function buildExportRows(rows, relayEntries, retourOrders) {
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
   const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
 
-  Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
+  // Preserve insertion order (server already sorted by position)
+  Object.entries(byClient).forEach(([clientName, info]) => {
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
     while (recipNames.length < colCount) recipNames.push('');
     csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);

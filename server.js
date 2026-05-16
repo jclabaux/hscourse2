@@ -950,11 +950,14 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     const sheets = await dbClient.query('SELECT id, name FROM route_sheets ORDER BY position, name');
     const assignments = await dbClient.query('SELECT route_sheet_id, client_id FROM route_sheet_clients');
 
-    // Build sheet -> client_ids map (deduplicated)
+    // Build sheet -> client_ids map (deduplicated), with position
     const sheetClients = {};
-    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set() }; });
+    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set(), clientPositions: {} }; });
     assignments.rows.forEach(a => {
-      if (sheetClients[a.route_sheet_id]) sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+      if (sheetClients[a.route_sheet_id]) {
+        sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+        sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position || 0;
+      }
     });
 
     // Assigned client IDs (across all sheets)
@@ -1035,7 +1038,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           }
         });
 
-      result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders });
+      // Sort sheetOrders by client position in this sheet
+      sheetOrders.sort((a, b) => {
+        const posA = sheet.clientPositions[a.client_id] ?? 999;
+        const posB = sheet.clientPositions[b.client_id] ?? 999;
+        return posA - posB;
+      });
+      result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
     }
 
     // "Autres" — clients with orders but not in any sheet
