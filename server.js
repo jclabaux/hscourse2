@@ -1044,6 +1044,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         const posB = sheet.clientPositions[b.client_id] ?? 999;
         return posA - posB;
       });
+      console.log('[export] sheet:', sheet.name, 'order:', [...new Set(sheetOrders.map(o => o.client_name + '(pos:' + (sheet.clientPositions[o.client_id]??'?') + ')'))]);
       result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
     }
 
