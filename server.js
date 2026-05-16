@@ -178,6 +178,20 @@ async function initDB() {
           ALTER TABLE route_sheet_clients ADD COLUMN position INTEGER NOT NULL DEFAULT 0;
         END IF;
       END $$;
+      -- Migration: initialize positions by name if all are 0
+      DO $$ BEGIN
+        IF (SELECT COUNT(DISTINCT position) FROM route_sheet_clients) <= 1 THEN
+          UPDATE route_sheet_clients rsc
+          SET position = sub.rn - 1
+          FROM (
+            SELECT id, ROW_NUMBER() OVER (PARTITION BY route_sheet_id ORDER BY (
+              SELECT name FROM clients WHERE id = route_sheet_clients.client_id
+            )) as rn
+            FROM route_sheet_clients
+          ) sub
+          WHERE rsc.id = sub.id;
+        END IF;
+      END $$;
 
       CREATE TABLE IF NOT EXISTS route_sheet_client_recipients (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1044,7 +1058,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         const posB = sheet.clientPositions[b.client_id] ?? 999;
         return posA - posB;
       });
-      console.log('[export] sheet:', sheet.name, 'order:', [...new Set(sheetOrders.map(o => o.client_name + '(pos:' + (sheet.clientPositions[o.client_id]??'?') + ')'))]);
+
       result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
     }
 
