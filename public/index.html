@@ -1772,6 +1772,13 @@ async function renderAdminSettings() {
           <div class="form-group"><label>Nouveau mot de passe</label><input type="password" id="cfg-pwd" placeholder="••••••••"></div>
           <button class="btn btn-primary btn-sm" onclick="saveAdminPwd()">Modifier</button>
         </div>
+      </div>
+      <div class="card" style="margin-top:16px;">
+        <div class="card-header"><div class="card-title">🔧 Maintenance</div></div>
+        <div class="card-body">
+          <p style="font-size:13px;color:var(--ink2);margin-bottom:12px;">Réinitialise les positions des clients dans les feuilles de route (ordre alphabétique).</p>
+          <button class="btn btn-secondary btn-sm" onclick="fixPositions()">🔄 Réinitialiser l'ordre des feuilles de route</button>
+        </div>
       </div>`;
   } catch(e) { el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>'; }
 }
