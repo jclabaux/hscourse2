@@ -295,7 +295,14 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
       <div id="tab-history" style="display:none;"></div>
       <div id="tab-clients" style="display:none;"></div>
       <div id="tab-routes" style="display:none;"></div>
-      <div id="tab-settings" style="display:none;"></div>
+      <div id="tab-settings" style="display:none;">
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-header"><div class="card-title">🔧 Maintenance</div></div>
+      <div class="card-body">
+        <p style="font-size:13px;color:var(--ink2);margin-bottom:12px;">Réinitialise l'ordre des clients dans les feuilles de route (par ordre alphabétique).</p>
+        <button class="btn btn-secondary btn-sm" onclick="fixPositions()">🔄 Réinitialiser l'ordre des feuilles de route</button>
+      </div>
+    </div></div>
     </div>
   </div>
 </div>
@@ -1732,6 +1739,13 @@ function buildExportRows(rows, relayEntries, retourOrders) {
 
   return csvRows;
 }
+async function fixPositions() {
+  try {
+    await api('admin/fix-positions', { method: 'POST' });
+    toast('✓ Positions réinitialisées');
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
 async function renderAdminSettings() {
   const el = document.getElementById('tab-settings');
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
