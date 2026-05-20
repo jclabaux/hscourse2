@@ -184,10 +184,11 @@ async function initDB() {
           UPDATE route_sheet_clients rsc
           SET position = sub.rn - 1
           FROM (
-            SELECT id, ROW_NUMBER() OVER (PARTITION BY route_sheet_id ORDER BY (
-              SELECT name FROM clients WHERE id = route_sheet_clients.client_id
-            )) as rn
-            FROM route_sheet_clients
+            SELECT rsc2.id, ROW_NUMBER() OVER (
+              PARTITION BY rsc2.route_sheet_id ORDER BY c.name
+            ) as rn
+            FROM route_sheet_clients rsc2
+            JOIN clients c ON c.id = rsc2.client_id
           ) sub
           WHERE rsc.id = sub.id;
         END IF;
@@ -1088,6 +1089,25 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   } finally {
     dbClient.release();
   }
+});
+
+// ── TEMP: fix positions ──────────────────────────────────
+app.post('/api/admin/fix-positions', requireAdmin, async (req, res) => {
+  try {
+    await pool.query(`
+      UPDATE route_sheet_clients rsc
+      SET position = sub.rn - 1
+      FROM (
+        SELECT rsc2.id, ROW_NUMBER() OVER (
+          PARTITION BY rsc2.route_sheet_id ORDER BY c.name
+        ) as rn
+        FROM route_sheet_clients rsc2
+        JOIN clients c ON c.id = rsc2.client_id
+      ) sub
+      WHERE rsc.id = sub.id
+    `);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── SERVE SPA ─────────────────────────────────────────────
