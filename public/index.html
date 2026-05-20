@@ -1396,9 +1396,21 @@ async function renderRouteSheets() {
           btnDown.title = 'Descendre';
           (function(sid, cid) { btnDown.addEventListener('click', function() { moveClientInSheet(sid, cid, 'down'); }); })(sheet.id, c.id);
 
+          // Position input
+          var posInput = document.createElement('input');
+          posInput.type = 'number';
+          posInput.min = '0';
+          posInput.value = c.position !== undefined ? c.position : 0;
+          posInput.title = 'Position';
+          posInput.style.cssText = 'width:48px;padding:3px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center;';
+          (function(sid, cid) {
+            posInput.addEventListener('change', function() { setClientPosition(sid, cid, posInput.value); });
+            posInput.addEventListener('click', function(e) { e.stopPropagation(); });
+          })(sheet.id, c.id);
+
           var orderBtns = document.createElement('div');
-          orderBtns.style.cssText = 'display:flex;gap:4px;';
-          orderBtns.append(btnUp, btnDown);
+          orderBtns.style.cssText = 'display:flex;gap:4px;align-items:center;';
+          orderBtns.append(btnUp, posInput, btnDown);
 
           clientHeader.append(clientTitle, orderBtns, btnRetirer);
           clientSection.appendChild(clientHeader);
@@ -1586,6 +1598,15 @@ async function addClientToSheet(sheetId) {
   try {
     await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId } });
     toast('✓ Client ajouté'); renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function setClientPosition(sheetId, clientId, newPos) {
+  try {
+    await api('route-sheets/' + sheetId + '/clients/' + clientId + '/position', {
+      method: 'PATCH', body: { position: parseInt(newPos) }
+    });
+    renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
 

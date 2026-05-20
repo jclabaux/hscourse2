@@ -816,6 +816,7 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
         .map(a => ({
           id: a.client_id,
           name: a.client_name,
+          position: a.position || 0,
           recipients: recipientAssignments.rows
             .filter(r => r.route_sheet_id === s.id && r.client_id === a.client_id)
             .map(r => ({
