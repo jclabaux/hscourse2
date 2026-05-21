@@ -1061,17 +1061,11 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         });
 
       // Sort sheetOrders by client position in this sheet
-      console.log('[DEBUG] sheet:', sheet.name);
-      console.log('[DEBUG] clientIds:', [...sheet.clientIds]);
-      console.log('[DEBUG] orders client_ids:', [...new Set(orders.rows.map(o => o.client_id))]);
-      console.log('[DEBUG] clientPositions:', JSON.stringify(sheet.clientPositions));
-      console.log('[DEBUG] sheetOrders count:', sheetOrders.length);
       sheetOrders.sort((a, b) => {
         const posA = sheet.clientPositions[a.client_id] ?? 999;
         const posB = sheet.clientPositions[b.client_id] ?? 999;
         return posA - posB;
       });
-      console.log('[DEBUG] after sort:', [...new Set(sheetOrders.map(o => o.client_name + '@' + (sheet.clientPositions[o.client_id]??'?')))]);
 
 
       result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
@@ -1108,19 +1102,25 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 // ── TEMP: fix positions ──────────────────────────────────
 app.post('/api/admin/fix-positions', requireAdmin, async (req, res) => {
   try {
-    await pool.query(`
-      UPDATE route_sheet_clients rsc
-      SET position = sub.rn - 1
-      FROM (
-        SELECT rsc2.id, ROW_NUMBER() OVER (
-          PARTITION BY rsc2.route_sheet_id ORDER BY c.name
-        ) as rn
-        FROM route_sheet_clients rsc2
-        JOIN clients c ON c.id = rsc2.client_id
-      ) sub
-      WHERE rsc.id = sub.id
+    // Get all route_sheet_clients with client names
+    const rows = await pool.query(`
+      SELECT rsc.id, rsc.route_sheet_id, c.name
+      FROM route_sheet_clients rsc
+      JOIN clients c ON c.id = rsc.client_id
+      ORDER BY rsc.route_sheet_id, c.name
     `);
-    res.json({ success: true });
+    // Group by sheet and assign sequential positions
+    const bySheet = {};
+    rows.rows.forEach(r => {
+      if (!bySheet[r.route_sheet_id]) bySheet[r.route_sheet_id] = [];
+      bySheet[r.route_sheet_id].push(r.id);
+    });
+    for (const [sheetId, ids] of Object.entries(bySheet)) {
+      for (let i = 0; i < ids.length; i++) {
+        await pool.query('UPDATE route_sheet_clients SET position=$1 WHERE id=$2', [i, ids[i]]);
+      }
+    }
+    res.json({ success: true, updated: rows.rows.length });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
