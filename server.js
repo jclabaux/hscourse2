@@ -169,8 +169,24 @@ async function initDB() {
         route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE,
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
         position INTEGER NOT NULL DEFAULT 0,
-        UNIQUE(route_sheet_id, client_id)
+        is_retour BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE(route_sheet_id, client_id, is_retour)
       );
+      -- Migration: add is_retour to route_sheet_clients if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='route_sheet_clients' AND column_name='is_retour') THEN
+          ALTER TABLE route_sheet_clients ADD COLUMN is_retour BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+      END $$;
+      -- Migration: drop old unique constraint and add new one with is_retour
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_route_sheet_id_client_id_key') THEN
+          ALTER TABLE route_sheet_clients DROP CONSTRAINT route_sheet_clients_route_sheet_id_client_id_key;
+          ALTER TABLE route_sheet_clients ADD CONSTRAINT route_sheet_clients_sheet_client_retour_key
+            UNIQUE(route_sheet_id, client_id, is_retour);
+        END IF;
+      END $$;
       -- Migration: add position to route_sheet_clients if not exists
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -796,7 +812,7 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
   try {
     const sheets = await pool.query('SELECT id, name, position FROM route_sheets ORDER BY position, name');
     const assignments = await pool.query(
-      `SELECT rsc.route_sheet_id, rsc.client_id, rsc.position, c.name as client_name
+      `SELECT rsc.route_sheet_id, rsc.client_id, rsc.position, rsc.is_retour, c.name as client_name
        FROM route_sheet_clients rsc
        JOIN clients c ON c.id = rsc.client_id
        ORDER BY rsc.position, c.name`
@@ -817,6 +833,7 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
           id: a.client_id,
           name: a.client_name,
           position: a.position || 0,
+          is_retour: a.is_retour || false,
           recipients: recipientAssignments.rows
             .filter(r => r.route_sheet_id === s.id && r.client_id === a.client_id)
             .map(r => ({
@@ -866,9 +883,10 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
       'SELECT COALESCE(MAX(position),0)+1 as pos FROM route_sheet_clients WHERE route_sheet_id=$1',
       [req.params.id]
     );
+    const is_retour = req.body.is_retour || false;
     await pool.query(
-      'INSERT INTO route_sheet_clients (route_sheet_id, client_id, position) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-      [req.params.id, client_id, maxPos.rows[0].pos]
+      'INSERT INTO route_sheet_clients (route_sheet_id, client_id, position, is_retour) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING',
+      [req.params.id, client_id, maxPos.rows[0].pos, is_retour]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -964,16 +982,18 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
     // Get route sheets with their clients
     const sheets = await dbClient.query('SELECT id, name FROM route_sheets ORDER BY position, name');
-    const assignments = await dbClient.query('SELECT route_sheet_id, client_id, position FROM route_sheet_clients ORDER BY position, client_id');
+    const assignments = await dbClient.query('SELECT route_sheet_id, client_id, position, is_retour FROM route_sheet_clients ORDER BY position, client_id');
 
     // Build sheet -> client_ids map (deduplicated), ordered by position
     const sheetClients = {};
-    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set(), clientOrder: [], clientPositions: {} }; });
+    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set(), clientKeys: new Set(), clientOrder: [], clientPositions: {} }; });
     assignments.rows.forEach(a => {
-      if (sheetClients[a.route_sheet_id] && !sheetClients[a.route_sheet_id].clientIds.has(a.client_id)) {
+      const key = a.client_id + (a.is_retour ? '_retour' : '_aller');
+      if (sheetClients[a.route_sheet_id] && !sheetClients[a.route_sheet_id].clientKeys.has(key)) {
+        sheetClients[a.route_sheet_id].clientKeys.add(key);
         sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
-        sheetClients[a.route_sheet_id].clientOrder.push(a.client_id);
-        sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position || 0;
+        sheetClients[a.route_sheet_id].clientOrder.push({ client_id: a.client_id, is_retour: a.is_retour || false });
+        sheetClients[a.route_sheet_id].clientPositions[key] = a.position || 0;
       }
     });
 
@@ -1061,17 +1081,45 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           }
         });
 
-      // Sort sheetOrders by clientOrder array (preserves DB order by position)
-      const clientOrderIndex = {};
-      (sheet.clientOrder || []).forEach((cid, idx) => { clientOrderIndex[cid] = idx; });
-      sheetOrders.sort((a, b) => {
-        const posA = clientOrderIndex[a.client_id] ?? 999;
-        const posB = clientOrderIndex[b.client_id] ?? 999;
-        return posA - posB;
+      // Separate aller and retour entries from clientOrder
+      const allerOrder = (sheet.clientOrder || []).filter(e => !e.is_retour);
+      const retourOrder = (sheet.clientOrder || []).filter(e => e.is_retour);
+      const allerClientIds = new Set(allerOrder.map(e => e.client_id));
+      const retourClientIds = new Set(retourOrder.map(e => e.client_id));
+      const allerIndex = {};
+      allerOrder.forEach((e, i) => { allerIndex[e.client_id] = i; });
+      const retourIndex = {};
+      retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
+
+      // Aller orders: normal orders for aller clients
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
+      allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
+
+      // Retour orders: orders where recipient's client is in retourClientIds
+      // (orders flagged as retour where the recipient belongs to a retour client in this sheet)
+      const retourRows = orders.rows.filter(o => {
+        if (!o.retour) return false;
+        return retourClientIds.has(o.recipient_id_val);
+      });
+      // Build retour section rows: group by recipient (who becomes the "client" in export)
+      const retourByRecip = {};
+      retourRows.forEach(o => {
+        const recipClientId = o.recipient_id_val;
+        if (!retourByRecip[recipClientId]) {
+          retourByRecip[recipClientId] = {
+            client_name: o.recipient_client_name || o.recipient_name,
+            client_address: o.recipient_client_address || '',
+            senders: []
+          };
+        }
+        retourByRecip[recipClientId].senders.push({
+          name: o.client_name,
+          qty: parseInt(o.quantity) || 0
+        });
       });
 
 
-      result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions });
     }
 
     // "Autres" — clients with orders but not in any sheet

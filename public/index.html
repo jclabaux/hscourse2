@@ -832,7 +832,7 @@ async function exportHistoryMonth(month) {
 
     const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
     const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
+    const header = ['Client', 'Ville', 'Nb de colis', ...recipHeaders];
     const csvRows = [header];
     Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
       const recipNames = Object.entries(info.recipients)
@@ -1378,7 +1378,12 @@ async function renderRouteSheets() {
           clientHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
           const clientTitle = document.createElement('div');
           clientTitle.style.cssText = 'font-weight:700;font-size:15px;';
-          clientTitle.textContent = '📦 ' + c.name;
+          clientTitle.textContent = (c.is_retour ? '🔄' : '📦') + ' ' + c.name;
+          const modeBadge = document.createElement('span');
+          modeBadge.textContent = c.is_retour ? 'Retour' : 'Aller';
+          modeBadge.style.cssText = 'font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px;'
+            + (c.is_retour ? 'background:#fee2e2;color:#dc2626;' : 'background:#dbeafe;color:#2563eb;');
+          clientTitle.appendChild(modeBadge);
           const btnRetirer = document.createElement('button');
           btnRetirer.style.cssText = "background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;";
           btnRetirer.textContent = 'Retirer';
@@ -1414,6 +1419,16 @@ async function renderRouteSheets() {
 
           clientHeader.append(clientTitle, orderBtns, btnRetirer);
           clientSection.appendChild(clientHeader);
+
+          // For retour clients, don't show recipient filter (retour is automatic)
+          if (c.is_retour) {
+            const retourInfo = document.createElement('p');
+            retourInfo.style.cssText = 'font-size:13px;color:var(--ink2);font-style:italic;padding:4px 0 8px;';
+            retourInfo.textContent = 'Les colis retour des expéditeurs vers ce client seront automatiquement inclus.';
+            clientSection.appendChild(retourInfo);
+            body.appendChild(clientSection);
+            return;
+          }
 
           // Column headers for recipients
           const colHeader = document.createElement('div');
@@ -1528,7 +1543,15 @@ async function renderRouteSheets() {
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
         btnAdd.onclick = () => addClientToSheet(sheet.id);
-        addClientRow.append(sel, btnAdd);
+        // Aller/Retour toggle
+        const modeLabel = document.createElement('label');
+        modeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;';
+        const modeCb = document.createElement('input');
+        modeCb.type = 'checkbox';
+        modeCb.id = 'add-client-retour-' + sheet.id;
+        modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
+        modeLabel.append(modeCb, document.createTextNode(' Retour'));
+        addClientRow.append(sel, modeLabel, btnAdd);
         addClientSection.appendChild(addClientRow);
       } else {
         const p = document.createElement('p');
@@ -1593,11 +1616,13 @@ async function deleteRouteSheet(id, name) {
 
 async function addClientToSheet(sheetId) {
   const sel = document.getElementById('add-client-' + sheetId);
+  const modeCb = document.getElementById('add-client-retour-' + sheetId);
   const clientId = sel.value;
   if (!clientId) { toast('⚠️ Choisissez un client'); return; }
+  const is_retour = modeCb ? modeCb.checked : false;
   try {
-    await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId } });
-    toast('✓ Client ajouté'); renderRouteSheets();
+    await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId, is_retour } });
+    toast('✓ Client ajouté en mode ' + (is_retour ? 'Retour' : 'Aller')); renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
 
@@ -1690,8 +1715,7 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          console.log('[export] sheet:', sheet.name, 'rows order:', sheet.rows.map(r => r.client_name));
-          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || []);
+          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width
           const colWidths = csvRows[0].map((_, ci) => ({
@@ -1710,7 +1734,7 @@ async function exportByRoute() {
   ]);
 }
 
-function buildExportRows(rows, relayEntries, retourOrders) {
+function buildExportRows(rows, relayEntries, retourOrders, retourSection) {
   // Use an ordered array to preserve server-side position order
   const clientOrder = [];
   const byClient = {};
@@ -1729,7 +1753,7 @@ function buildExportRows(rows, relayEntries, retourOrders) {
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Nb de colis', ...recipHeaders]];
 
   // Use clientOrder array to preserve server-side position order
   clientOrder.forEach(clientName => {
