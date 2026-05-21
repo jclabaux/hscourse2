@@ -982,12 +982,18 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     // Fix: also add clients from route_sheet_client_recipients to their sheet's clientIds
     // In case a client has recipient filters but wasn't added to route_sheet_clients
     const rscr_clients = await dbClient.query(
-      'SELECT DISTINCT route_sheet_id, client_id FROM route_sheet_client_recipients'
+      `SELECT DISTINCT rscr.route_sheet_id, rscr.client_id, COALESCE(rsc.position, 999) as position
+       FROM route_sheet_client_recipients rscr
+       LEFT JOIN route_sheet_clients rsc ON rsc.route_sheet_id = rscr.route_sheet_id AND rsc.client_id = rscr.client_id`
     );
     rscr_clients.rows.forEach(a => {
       if (sheetClients[a.route_sheet_id]) {
         sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
         assignedClientIds.add(a.client_id);
+        // Also set position if not already set from assignments
+        if (sheetClients[a.route_sheet_id].clientPositions[a.client_id] === undefined) {
+          sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position;
+        }
       }
     });
 
@@ -1055,13 +1061,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         });
 
       // Sort sheetOrders by client position in this sheet
-      console.log('[pos] sheet:', sheet.name, 'positions:', JSON.stringify(sheet.clientPositions));
       sheetOrders.sort((a, b) => {
         const posA = sheet.clientPositions[a.client_id] ?? 999;
         const posB = sheet.clientPositions[b.client_id] ?? 999;
         return posA - posB;
       });
-      console.log('[pos] after sort:', [...new Set(sheetOrders.map(o => o.client_name + '=' + (sheet.clientPositions[o.client_id]??'?')))]);
+
 
       result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
     }
