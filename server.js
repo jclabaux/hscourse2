@@ -1062,8 +1062,10 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
       // Sort sheetOrders by client position in this sheet
       console.log('[DEBUG] sheet:', sheet.name);
+      console.log('[DEBUG] clientIds:', [...sheet.clientIds]);
+      console.log('[DEBUG] orders client_ids:', [...new Set(orders.rows.map(o => o.client_id))]);
       console.log('[DEBUG] clientPositions:', JSON.stringify(sheet.clientPositions));
-      console.log('[DEBUG] before sort:', [...new Set(sheetOrders.map(o => o.client_id + '=' + o.client_name))]);
+      console.log('[DEBUG] sheetOrders count:', sheetOrders.length);
       sheetOrders.sort((a, b) => {
         const posA = sheet.clientPositions[a.client_id] ?? 999;
         const posB = sheet.clientPositions[b.client_id] ?? 999;
