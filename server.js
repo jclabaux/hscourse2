@@ -964,14 +964,15 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
     // Get route sheets with their clients
     const sheets = await dbClient.query('SELECT id, name FROM route_sheets ORDER BY position, name');
-    const assignments = await dbClient.query('SELECT route_sheet_id, client_id FROM route_sheet_clients');
+    const assignments = await dbClient.query('SELECT route_sheet_id, client_id, position FROM route_sheet_clients ORDER BY position, client_id');
 
-    // Build sheet -> client_ids map (deduplicated), with position
+    // Build sheet -> client_ids map (deduplicated), ordered by position
     const sheetClients = {};
-    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set(), clientPositions: {} }; });
+    sheets.rows.forEach(s => { sheetClients[s.id] = { name: s.name, clientIds: new Set(), clientOrder: [], clientPositions: {} }; });
     assignments.rows.forEach(a => {
-      if (sheetClients[a.route_sheet_id]) {
+      if (sheetClients[a.route_sheet_id] && !sheetClients[a.route_sheet_id].clientIds.has(a.client_id)) {
         sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+        sheetClients[a.route_sheet_id].clientOrder.push(a.client_id);
         sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position || 0;
       }
     });
@@ -988,12 +989,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     );
     rscr_clients.rows.forEach(a => {
       if (sheetClients[a.route_sheet_id]) {
-        sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
-        assignedClientIds.add(a.client_id);
-        // Also set position if not already set from assignments
-        if (sheetClients[a.route_sheet_id].clientPositions[a.client_id] === undefined) {
-          sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position;
+        if (!sheetClients[a.route_sheet_id].clientIds.has(a.client_id)) {
+          sheetClients[a.route_sheet_id].clientIds.add(a.client_id);
+          sheetClients[a.route_sheet_id].clientOrder.push(a.client_id);
+          sheetClients[a.route_sheet_id].clientPositions[a.client_id] = a.position || 999;
         }
+        assignedClientIds.add(a.client_id);
       }
     });
 
@@ -1060,10 +1061,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           }
         });
 
-      // Sort sheetOrders by client position in this sheet
+      // Sort sheetOrders by clientOrder array (preserves DB order by position)
+      const clientOrderIndex = {};
+      (sheet.clientOrder || []).forEach((cid, idx) => { clientOrderIndex[cid] = idx; });
       sheetOrders.sort((a, b) => {
-        const posA = sheet.clientPositions[a.client_id] ?? 999;
-        const posB = sheet.clientPositions[b.client_id] ?? 999;
+        const posA = clientOrderIndex[a.client_id] ?? 999;
+        const posB = clientOrderIndex[b.client_id] ?? 999;
         return posA - posB;
       });
 
