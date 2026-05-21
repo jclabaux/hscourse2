@@ -1061,11 +1061,15 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         });
 
       // Sort sheetOrders by client position in this sheet
+      console.log('[DEBUG] sheet:', sheet.name);
+      console.log('[DEBUG] clientPositions:', JSON.stringify(sheet.clientPositions));
+      console.log('[DEBUG] before sort:', [...new Set(sheetOrders.map(o => o.client_id + '=' + o.client_name))]);
       sheetOrders.sort((a, b) => {
         const posA = sheet.clientPositions[a.client_id] ?? 999;
         const posB = sheet.clientPositions[b.client_id] ?? 999;
         return posA - posB;
       });
+      console.log('[DEBUG] after sort:', [...new Set(sheetOrders.map(o => o.client_name + '@' + (sheet.clientPositions[o.client_id]??'?')))]);
 
 
       result.push({ name: sheet.name, rows: sheetOrders, relayEntries, retourOrders, clientPositions: sheet.clientPositions });
