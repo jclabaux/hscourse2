@@ -1539,34 +1539,34 @@ async function renderRouteSheets() {
         defOpt.value = '';
         defOpt.textContent = '— Choisir un client —';
         sel.appendChild(defOpt);
-        // Function to rebuild options based on retour checkbox
+        // Declare modeCb BEFORE rebuildOptions uses it
+        const modeCb = document.createElement('input');
+        modeCb.type = 'checkbox';
+        modeCb.id = 'add-client-retour-' + sheet.id;
+        modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
         function rebuildOptions() {
           while (sel.options.length > 1) sel.remove(1);
-          const isRetour = modeCb.checked;
-          const existingIds = isRetour ? retourClientIds : allerClientIds;
+          var isRetour = modeCb.checked;
+          var existingIds = isRetour ? retourClientIds : allerClientIds;
           unassigned.forEach(c => {
             if (!existingIds.has(c.id)) {
-              const opt = document.createElement('option');
+              var opt = document.createElement('option');
               opt.value = c.id;
               opt.textContent = c.name;
               sel.appendChild(opt);
             }
           });
         }
+        modeCb.addEventListener('change', rebuildOptions);
         rebuildOptions();
         const btnAdd = document.createElement('button');
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
         btnAdd.onclick = () => addClientToSheet(sheet.id);
-        // Aller/Retour toggle
+        // Aller/Retour toggle label (modeCb already declared above)
         const modeLabel = document.createElement('label');
         modeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;';
-        const modeCb = document.createElement('input');
-        modeCb.type = 'checkbox';
-        modeCb.id = 'add-client-retour-' + sheet.id;
-        modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
         modeLabel.append(modeCb, document.createTextNode(' Retour'));
-        modeCb.addEventListener('change', rebuildOptions);
         addClientRow.append(sel, modeLabel, btnAdd);
         addClientSection.appendChild(addClientRow);
       } else {
