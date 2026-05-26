@@ -1325,7 +1325,13 @@ async function renderRouteSheets() {
     }
 
     sheets.forEach(sheet => {
-      const unassigned = clients.filter(c => !sheet.clients.find(sc => sc.id === c.id));
+      // A client can be added in Aller mode if not already in Aller
+      // A client can be added in Retour mode if not already in Retour
+      // So we compute separately based on checkbox state — show all clients not present in BOTH modes
+      const allerClientIds = new Set(sheet.clients.filter(sc => !sc.is_retour).map(sc => sc.id));
+      const retourClientIds = new Set(sheet.clients.filter(sc => sc.is_retour).map(sc => sc.id));
+      // unassigned = clients missing from at least one mode (show all that aren't in both)
+      const unassigned = clients.filter(c => !allerClientIds.has(c.id) || !retourClientIds.has(c.id));
 
       // Card
       const card = document.createElement('div');
@@ -1533,12 +1539,21 @@ async function renderRouteSheets() {
         defOpt.value = '';
         defOpt.textContent = '— Choisir un client —';
         sel.appendChild(defOpt);
-        unassigned.forEach(c => {
-          const opt = document.createElement('option');
-          opt.value = c.id;
-          opt.textContent = c.name;
-          sel.appendChild(opt);
-        });
+        // Function to rebuild options based on retour checkbox
+        function rebuildOptions() {
+          while (sel.options.length > 1) sel.remove(1);
+          const isRetour = modeCb.checked;
+          const existingIds = isRetour ? retourClientIds : allerClientIds;
+          unassigned.forEach(c => {
+            if (!existingIds.has(c.id)) {
+              const opt = document.createElement('option');
+              opt.value = c.id;
+              opt.textContent = c.name;
+              sel.appendChild(opt);
+            }
+          });
+        }
+        rebuildOptions();
         const btnAdd = document.createElement('button');
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
@@ -1551,6 +1566,7 @@ async function renderRouteSheets() {
         modeCb.id = 'add-client-retour-' + sheet.id;
         modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
         modeLabel.append(modeCb, document.createTextNode(' Retour'));
+        modeCb.addEventListener('change', rebuildOptions);
         addClientRow.append(sel, modeLabel, btnAdd);
         addClientSection.appendChild(addClientRow);
       } else {
