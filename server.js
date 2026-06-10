@@ -179,10 +179,14 @@ async function initDB() {
           ALTER TABLE route_sheet_clients ADD COLUMN is_retour BOOLEAN NOT NULL DEFAULT FALSE;
         END IF;
       END $$;
-      -- Migration: drop old unique constraint and add new one with is_retour
+      -- Migration: update unique constraint to include is_retour (safe version)
       DO $$ BEGIN
+        -- Drop old constraint if exists
         IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_route_sheet_id_client_id_key') THEN
           ALTER TABLE route_sheet_clients DROP CONSTRAINT route_sheet_clients_route_sheet_id_client_id_key;
+        END IF;
+        -- Add new constraint if not exists
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_sheet_client_retour_key') THEN
           ALTER TABLE route_sheet_clients ADD CONSTRAINT route_sheet_clients_sheet_client_retour_key
             UNIQUE(route_sheet_id, client_id, is_retour);
         END IF;
@@ -1181,7 +1185,7 @@ app.get('*', (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────
-const PORT = process.env.PORT ||8080;
+const PORT = process.env.PORT || 3000;
 initDB().then(() => {
   app.listen(PORT, () => console.log(`✓ Serveur démarré sur le port ${PORT}`));
 }).catch(e => {
