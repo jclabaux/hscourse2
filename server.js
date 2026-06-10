@@ -179,14 +179,10 @@ async function initDB() {
           ALTER TABLE route_sheet_clients ADD COLUMN is_retour BOOLEAN NOT NULL DEFAULT FALSE;
         END IF;
       END $$;
-      -- Migration: update unique constraint to include is_retour (safe version)
+      -- Migration: drop old unique constraint and add new one with is_retour
       DO $$ BEGIN
-        -- Drop old constraint if exists
         IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_route_sheet_id_client_id_key') THEN
           ALTER TABLE route_sheet_clients DROP CONSTRAINT route_sheet_clients_route_sheet_id_client_id_key;
-        END IF;
-        -- Add new constraint if not exists
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_sheet_client_retour_key') THEN
           ALTER TABLE route_sheet_clients ADD CONSTRAINT route_sheet_clients_sheet_client_retour_key
             UNIQUE(route_sheet_id, client_id, is_retour);
         END IF;
