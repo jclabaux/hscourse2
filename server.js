@@ -1181,7 +1181,7 @@ app.get('*', (req, res) => {
 });
 
 // ── START ─────────────────────────────────────────────────
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 initDB().then(() => {
   app.listen(PORT, () => console.log(`✓ Serveur démarré sur le port ${PORT}`));
 }).catch(e => {
