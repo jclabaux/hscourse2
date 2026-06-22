@@ -1119,7 +1119,44 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       });
 
 
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions });
+      // Build recipient summary section
+      // For each recipient that appears in allerOrders, compute total colis across all clients
+      // Order follows the clientOrder (recipients appear in order of their client's position)
+      const recipientTotals = {}; // recipient_id -> { name, address, qty }
+      const recipientOrder = []; // ordered list of recipient_ids
+
+      allerOrders.forEach(o => {
+        const rid = o.recipient_id;
+        if (!recipientTotals[rid]) {
+          recipientTotals[rid] = {
+            name: o.recipient_name,
+            address: '',
+            qty: 0
+          };
+          recipientOrder.push(rid);
+        }
+        recipientTotals[rid].qty += parseInt(o.quantity) || 0;
+      });
+
+      // Fetch recipient addresses
+      const recipIds = Object.keys(recipientTotals);
+      if (recipIds.length > 0) {
+        const recipAddrs = await dbClient.query(
+          `SELECT id, address FROM recipients WHERE id = ANY($1)`,
+          [recipIds]
+        );
+        recipAddrs.rows.forEach(r => {
+          if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
+        });
+      }
+
+      // Remove duplicate recipient_ids while preserving first-seen order
+      const seenRecips = new Set();
+      const orderedRecipients = recipientOrder
+        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
+        .map(rid => recipientTotals[rid]);
+
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
 
     // "Autres" — clients with orders but not in any sheet
