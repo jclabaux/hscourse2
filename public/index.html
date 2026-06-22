@@ -776,7 +776,7 @@ async function exportHistoryMonth(month) {
         .sort((a,b) => a[0].localeCompare(b[0]))
         .map(([name]) => name);
       while (recipNames.length < maxRecip) recipNames.push('');
-      csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
+      csvRows.push([clientName, info.address, '', ...recipNames]);
     });
 
     const wb = XLSX.utils.book_new();
@@ -1613,7 +1613,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     const info = byClient[clientName];
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
     while (recipNames.length < colCount) recipNames.push('');
-    csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
+    csvRows.push([clientName, info.address, '', ...recipNames]);
   });
 
   // Recipient summary rows (ordered by sheet config = order of first appearance in allerOrders)
