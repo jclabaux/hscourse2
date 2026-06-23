@@ -1035,15 +1035,21 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     for (const [sheetId, sheet] of Object.entries(sheetClients)) {
       const sheetOrders = orders.rows.filter(o => {
         if (!sheet.clientIds.has(o.client_id)) return false;
-        const filters = recipientFilters.rows.filter(
+        const filtersForThisSheet = recipientFilters.rows.filter(
           r => r.route_sheet_id === sheetId && r.client_id === o.client_id
         );
-        // No filters configured for this client in this sheet -> include all orders
-        if (filters.length === 0) return true;
-        // Include if this recipient is in the filter list AND has no relay (delivered here directly)
-        const matchingFilter = filters.find(f => f.recipient_id === o.recipient_id);
-        if (!matchingFilter) return false; // recipient not in filter list
-        return !matchingFilter.relay_sheet_id; // exclude if relayed to another sheet
+        // Check if this recipient is configured in ANY other sheet for this client
+        const configuredElsewhere = recipientFilters.rows.some(
+          r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
+        );
+        if (configuredElsewhere) return false; // recipient belongs to another sheet
+
+        // No filters configured for this client in this sheet -> include all remaining orders
+        if (filtersForThisSheet.length === 0) return true;
+        // Include if this recipient is in the filter list AND has no relay
+        const matchingFilter = filtersForThisSheet.find(f => f.recipient_id === o.recipient_id);
+        if (!matchingFilter) return false;
+        return !matchingFilter.relay_sheet_id;
       });
 
       // Find retour orders for this sheet:
