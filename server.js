@@ -1042,6 +1042,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         const configuredElsewhere = recipientFilters.rows.some(
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
+        if (o.recipient_name === 'DR BUHAJ') {
+          console.log('[DEBUG BUHAJ] sheetId:', sheetId, 'sheet.name:', sheet.name);
+          console.log('[DEBUG BUHAJ] filtersForThisSheet:', filtersForThisSheet.length);
+          console.log('[DEBUG BUHAJ] configuredElsewhere:', configuredElsewhere);
+          console.log('[DEBUG BUHAJ] recipientFilters for BUHAJ:', recipientFilters.rows.filter(r => r.recipient_id === o.recipient_id));
+        }
         if (configuredElsewhere) return false; // recipient belongs to another sheet
 
         // No filters configured for this client in this sheet -> include all remaining orders
