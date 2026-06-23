@@ -1035,21 +1035,19 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     for (const [sheetId, sheet] of Object.entries(sheetClients)) {
       const sheetOrders = orders.rows.filter(o => {
         if (!sheet.clientIds.has(o.client_id)) return false;
-        const filtersForThisSheet = recipientFilters.rows.filter(
+        const filters = recipientFilters.rows.filter(
           r => r.route_sheet_id === sheetId && r.client_id === o.client_id
         );
-        // Check if this recipient is configured in ANY other sheet for this client
+        // Is recipient explicitly in THIS sheet's filter list?
+        const matchingFilter = filters.find(f => f.recipient_id === o.recipient_id);
+        if (matchingFilter) return !matchingFilter.relay_sheet_id;
+        // Is recipient configured for this client in ANOTHER sheet?
         const configuredElsewhere = recipientFilters.rows.some(
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
-        if (configuredElsewhere) return false; // recipient belongs to another sheet
-
-        // No filters configured for this client in this sheet -> include all remaining orders
-        if (filtersForThisSheet.length === 0) return true;
-        // Include if this recipient is in the filter list AND has no relay
-        const matchingFilter = filtersForThisSheet.find(f => f.recipient_id === o.recipient_id);
-        if (!matchingFilter) return false;
-        return !matchingFilter.relay_sheet_id;
+        if (configuredElsewhere) return false;
+        // Not configured anywhere: include only if client has no filters in this sheet
+        return filters.length === 0;
       });
 
       // Find retour orders for this sheet:
@@ -1125,44 +1123,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       });
 
 
-      // Build recipient summary section
-      // For each recipient that appears in allerOrders, compute total colis across all clients
-      // Order follows the clientOrder (recipients appear in order of their client's position)
-      const recipientTotals = {}; // recipient_id -> { name, address, qty }
-      const recipientOrder = []; // ordered list of recipient_ids
-
-      allerOrders.forEach(o => {
-        const rid = o.recipient_id;
-        if (!recipientTotals[rid]) {
-          recipientTotals[rid] = {
-            name: o.recipient_name,
-            address: '',
-            qty: 0
-          };
-          recipientOrder.push(rid);
-        }
-        recipientTotals[rid].qty += parseInt(o.quantity) || 0;
-      });
-
-      // Fetch recipient addresses
-      const recipIds = Object.keys(recipientTotals);
-      if (recipIds.length > 0) {
-        const recipAddrs = await dbClient.query(
-          `SELECT id, address FROM recipients WHERE id = ANY($1)`,
-          [recipIds]
-        );
-        recipAddrs.rows.forEach(r => {
-          if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
-        });
-      }
-
-      // Remove duplicate recipient_ids while preserving first-seen order
-      const seenRecips = new Set();
-      const orderedRecipients = recipientOrder
-        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
-        .map(rid => recipientTotals[rid]);
-
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients, debug: { sheetId, filterCount: recipientFilters.rows.filter(r => r.route_sheet_id === sheetId).length, orderCount: allerOrders.length } });
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions });
     }
 
     // "Autres" — clients with orders but not in any sheet
@@ -1191,47 +1152,6 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   } finally {
     dbClient.release();
   }
-});
-
-// ── TEMP: diagnostic ─────────────────────────────────────
-app.get('/api/admin/diagnostic-buhaj', requireAdmin, async (req, res) => {
-  try {
-    // Find DR BUHAJ recipient
-    const recip = await pool.query(
-      "SELECT id, name, client_id FROM recipients WHERE name ILIKE '%BUHAJ%'"
-    );
-    if (recip.rows.length === 0) return res.json({ error: 'DR BUHAJ not found in recipients' });
-    const recipId = recip.rows[0].id;
-
-    // Find in which sheets this recipient is configured
-    const inSheets = await pool.query(
-      `SELECT rscr.route_sheet_id, rs.name as sheet_name, rscr.client_id, c.name as client_name
-       FROM route_sheet_client_recipients rscr
-       JOIN route_sheets rs ON rs.id = rscr.route_sheet_id
-       JOIN clients c ON c.id = rscr.client_id
-       WHERE rscr.recipient_id = $1`, [recipId]
-    );
-
-    // Find orders targeting DR BUHAJ
-    const ordersList = await pool.query(
-      `SELECT o.client_id, c.name as client_name, o.recipient_id, o.quantity
-       FROM orders o
-       JOIN clients c ON c.id = o.client_id
-       WHERE o.recipient_id = $1`, [recipId]
-    );
-
-    // Find which sheets the ordering clients belong to
-    const clientSheets = await pool.query(
-      `SELECT rsc.client_id, c.name as client_name, rsc.route_sheet_id, rs.name as sheet_name
-       FROM route_sheet_clients rsc
-       JOIN clients c ON c.id = rsc.client_id
-       JOIN route_sheets rs ON rs.id = rsc.route_sheet_id
-       WHERE rsc.client_id = ANY($1)`,
-      [ordersList.rows.map(o => o.client_id)]
-    );
-
-    res.json({ recipient: recip.rows[0], configuredInSheets: inSheets.rows, orders: ordersList.rows, clientSheets: clientSheets.rows });
-  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── TEMP: fix positions ──────────────────────────────────
