@@ -1042,12 +1042,6 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         const configuredElsewhere = recipientFilters.rows.some(
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
-        if (o.recipient_name === 'DR BUHAJ') {
-          console.log('[DEBUG BUHAJ] sheetId:', sheetId, 'sheet.name:', sheet.name);
-          console.log('[DEBUG BUHAJ] filtersForThisSheet:', filtersForThisSheet.length);
-          console.log('[DEBUG BUHAJ] configuredElsewhere:', configuredElsewhere);
-          console.log('[DEBUG BUHAJ] recipientFilters for BUHAJ:', recipientFilters.rows.filter(r => r.recipient_id === o.recipient_id));
-        }
         if (configuredElsewhere) return false; // recipient belongs to another sheet
 
         // No filters configured for this client in this sheet -> include all remaining orders
@@ -1168,7 +1162,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
         .map(rid => recipientTotals[rid]);
 
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients, debug: { sheetId, filterCount: recipientFilters.rows.filter(r => r.route_sheet_id === sheetId).length, orderCount: allerOrders.length } });
     }
 
     // "Autres" — clients with orders but not in any sheet
@@ -1197,6 +1191,47 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   } finally {
     dbClient.release();
   }
+});
+
+// ── TEMP: diagnostic ─────────────────────────────────────
+app.get('/api/admin/diagnostic-buhaj', requireAdmin, async (req, res) => {
+  try {
+    // Find DR BUHAJ recipient
+    const recip = await pool.query(
+      "SELECT id, name, client_id FROM recipients WHERE name ILIKE '%BUHAJ%'"
+    );
+    if (recip.rows.length === 0) return res.json({ error: 'DR BUHAJ not found in recipients' });
+    const recipId = recip.rows[0].id;
+
+    // Find in which sheets this recipient is configured
+    const inSheets = await pool.query(
+      `SELECT rscr.route_sheet_id, rs.name as sheet_name, rscr.client_id, c.name as client_name
+       FROM route_sheet_client_recipients rscr
+       JOIN route_sheets rs ON rs.id = rscr.route_sheet_id
+       JOIN clients c ON c.id = rscr.client_id
+       WHERE rscr.recipient_id = $1`, [recipId]
+    );
+
+    // Find orders targeting DR BUHAJ
+    const ordersList = await pool.query(
+      `SELECT o.client_id, c.name as client_name, o.recipient_id, o.quantity
+       FROM orders o
+       JOIN clients c ON c.id = o.client_id
+       WHERE o.recipient_id = $1`, [recipId]
+    );
+
+    // Find which sheets the ordering clients belong to
+    const clientSheets = await pool.query(
+      `SELECT rsc.client_id, c.name as client_name, rsc.route_sheet_id, rs.name as sheet_name
+       FROM route_sheet_clients rsc
+       JOIN clients c ON c.id = rsc.client_id
+       JOIN route_sheets rs ON rs.id = rsc.route_sheet_id
+       WHERE rsc.client_id = ANY($1)`,
+      [ordersList.rows.map(o => o.client_id)]
+    );
+
+    res.json({ recipient: recip.rows[0], configuredInSheets: inSheets.rows, orders: ordersList.rows, clientSheets: clientSheets.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── TEMP: fix positions ──────────────────────────────────
