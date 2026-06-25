@@ -615,15 +615,7 @@ function setComment(recipientId, val) {
 }
 
 function setRetour(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  var o = recipientOrders[recipientId];
-  o.retour = val;
-  o.qty_retour = val ? 1 : 0;
-  refreshRowUI(recipientId);
-}
-
-function setRetour(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
   recipientOrders[recipientId].retour = val;
   saveOrder(recipientId, true);
 }
@@ -1620,7 +1612,6 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          console.log('[SHEET]', sheet.name, 'rows:', sheet.rows.map(r=>r.client_name+'->'+r.recipient_name), 'debug:', sheet.debug);
           const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || [], sheet.recipientSummary || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width
@@ -1641,35 +1632,28 @@ async function exportByRoute() {
 }
 
 function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipientSummary) {
-  // Use ordered array to preserve server-side position order
-  const clientOrder = [];
   const byClient = {};
   rows.forEach(o => {
-    if (!byClient[o.client_name]) {
-      byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
-      clientOrder.push(o.client_name);
-    }
+    if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
     byClient[o.client_name].totalQty += parseInt(o.quantity) || 0;
     const recipLabel = o.recipient_name + (o.paiement_course ? ' \\R' : '');
     byClient[o.client_name].recipients[recipLabel] = o.quantity;
   });
 
-  const maxRecip = clientOrder.length > 0
-    ? Math.max(...clientOrder.map(n => Object.keys(byClient[n].recipients).length))
+  const maxRecip = Object.keys(byClient).length > 0
+    ? Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length))
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Nb de colis', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
 
-  // Client rows (ordered by server-side position)
-  clientOrder.forEach(clientName => {
-    const info = byClient[clientName];
+  Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
     while (recipNames.length < colCount) recipNames.push('');
-    csvRows.push([clientName, info.address, '', ...recipNames]);
+    csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
   });
 
-  // Recipient summary rows (ordered by sheet config = order of first appearance in allerOrders)
+  // Recipient summary rows
   if (recipientSummary && recipientSummary.length > 0) {
     recipientSummary.forEach(r => {
       const emptyCols = Array(colCount).fill('');
@@ -1677,17 +1661,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     });
   }
 
-  // Retour section rows
-  if (retourSection && retourSection.length > 0) {
-    retourSection.forEach(entry => {
-      const senderNames = entry.senders.map(s => s.name);
-      const totalQty = entry.senders.reduce((sum, s) => sum + s.qty, 0);
-      while (senderNames.length < colCount) senderNames.push('');
-      csvRows.push([entry.client_name, entry.client_address, totalQty, ...senderNames]);
-    });
-  }
-
-  // Relay rows
+  // Add relay rows if any
   if (relayEntries && relayEntries.length > 0) {
     const relayNames = relayEntries.map(r => r.client_name);
     while (relayNames.length < colCount) relayNames.push('');
@@ -1698,9 +1672,10 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     });
   }
 
-  // Retour orders (inverted sender/recipient)
+  // Add retour rows if any (appear as normal rows but with sender/recipient inverted)
   if (retourOrders && retourOrders.length > 0) {
     retourOrders.forEach(o => {
+      // Recipient becomes the sender, original client becomes the recipient
       const recipCols = Array(Math.max(colCount, 1)).fill('');
       recipCols[0] = o.client_name + (o.paiement_course ? ' \\R' : '');
       csvRows.push([
