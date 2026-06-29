@@ -1612,7 +1612,6 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          console.log('[DEBUG]', sheet.name, sheet._debug, 'rows:', sheet.rows.map(r=>r.recipient_name));
           const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || [], sheet.recipientSummary || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width

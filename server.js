@@ -1149,7 +1149,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
         .map(rid => recipientTotals[rid]);
 
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients, _debug: { filterCount: recipientFilters.rows.length, filtersForSheet: recipientFilters.rows.filter(r => r.route_sheet_id === sheetId).length } });
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
 
     // "Autres" — clients with orders but not in any sheet
