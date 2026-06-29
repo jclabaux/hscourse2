@@ -813,7 +813,7 @@ async function exportHistoryMonth(month) {
 
     const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
     const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
+    const header = ['Client', 'Ville', 'Nb de colis', ...recipHeaders];
     const csvRows = [header];
     Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
       const recipNames = Object.entries(info.recipients)
@@ -1645,7 +1645,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Nb de colis', ...recipHeaders]];
 
   Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
