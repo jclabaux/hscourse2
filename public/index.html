@@ -615,9 +615,11 @@ function setComment(recipientId, val) {
 }
 
 function setRetour(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
-  recipientOrders[recipientId].retour = val;
-  saveOrder(recipientId, true);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  var o = recipientOrders[recipientId];
+  o.retour = val;
+  o.qty_retour = val ? 1 : 0;
+  refreshRowUI(recipientId);
 }
 
 function totalQty(o) { return (o.qty_normal||0) + (o.qty_retour||0); }
