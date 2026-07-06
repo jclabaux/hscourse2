@@ -469,7 +469,7 @@ async function renderClientRecipients() {
     table.innerHTML = `<div class="table-header"><div class="th">Destinataire</div><div class="th" style="text-align:center;">Colis</div><div class="th"></div></div>`;
 
     recipients.forEach(r => {
-      const o = recipientOrders[r.id] || { qty: 0, comment: '' };
+      const o = recipientOrders[r.id] || { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
       const isSelected = (o.qty_normal||0)+(o.qty_retour||0) > 0;
       const rowId = 'row-' + r.id.replace(/-/g, '');
 
