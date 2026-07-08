@@ -1099,12 +1099,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
-      // Retour orders: orders where recipient's client is in retourClientIds
-      // (orders flagged as retour where the recipient belongs to a retour client in this sheet)
+      // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
+      // The recipient's client_id must be in this sheet's allerClientIds (normal clients)
       const retourRows = orders.rows.filter(o => {
         if (!o.retour) return false;
-        // recipient_client_id is the client_id of the recipient (each recipient belongs to a client)
-        return retourClientIds.has(o.recipient_client_id);
+        // recipient_client_id is the client_id of the recipient
+        return sheet.clientIds.has(o.recipient_client_id);
       });
       // Build retour section rows: group by recipient (who becomes the "client" in export)
       const retourByRecip = {};
