@@ -964,7 +964,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.retour, o.ordered_at, o.month_label,
               c.id as client_id_val, c.name as client_name, c.address as client_address,
               r.id as recipient_id_val, r.name as recipient_name,
-              rc.name as recipient_client_name, rc.address as recipient_client_address,
+              rc.id as recipient_client_id, rc.name as recipient_client_name, rc.address as recipient_client_address,
               COALESCE(cr.paiement_course, false) as paiement_course
        FROM orders o
        JOIN clients c ON c.id = o.client_id
@@ -1103,12 +1103,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       // (orders flagged as retour where the recipient belongs to a retour client in this sheet)
       const retourRows = orders.rows.filter(o => {
         if (!o.retour) return false;
-        return retourClientIds.has(o.recipient_id_val);
+        // recipient_client_id is the client_id of the recipient (each recipient belongs to a client)
+        return retourClientIds.has(o.recipient_client_id);
       });
       // Build retour section rows: group by recipient (who becomes the "client" in export)
       const retourByRecip = {};
       retourRows.forEach(o => {
-        const recipClientId = o.recipient_id_val;
+        const recipClientId = o.recipient_client_id;
         if (!retourByRecip[recipClientId]) {
           retourByRecip[recipClientId] = {
             client_name: o.recipient_client_name || o.recipient_name,

@@ -1668,6 +1668,16 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     });
   }
 
+  // Retour section: destinataire en col A, expéditeur(s) en col D+
+  if (retourSection && retourSection.length > 0) {
+    retourSection.forEach(entry => {
+      const totalQty = entry.senders.reduce((sum, s) => sum + s.qty, 0);
+      const senderNames = entry.senders.map(s => s.name);
+      while (senderNames.length < colCount) senderNames.push('');
+      csvRows.push([entry.client_name, entry.client_address, totalQty, ...senderNames]);
+    });
+  }
+
   // Add relay rows if any
   if (relayEntries && relayEntries.length > 0) {
     const relayNames = relayEntries.map(r => r.client_name);
