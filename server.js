@@ -110,6 +110,8 @@ async function initDB() {
         client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
         recipient_id UUID REFERENCES recipients(id) ON DELETE CASCADE,
         quantity INTEGER NOT NULL DEFAULT 0,
+        qty_normal INTEGER NOT NULL DEFAULT 0,
+        qty_retour INTEGER NOT NULL DEFAULT 0,
         comment TEXT DEFAULT '',
         retour BOOLEAN NOT NULL DEFAULT FALSE,
         ordered_at TIMESTAMPTZ DEFAULT NOW(),
@@ -121,6 +123,14 @@ async function initDB() {
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
           WHERE table_name='orders' AND column_name='retour') THEN
           ALTER TABLE orders ADD COLUMN retour BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+      END $$;
+      -- Migration: add qty_normal and qty_retour if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='orders' AND column_name='qty_normal') THEN
+          ALTER TABLE orders ADD COLUMN qty_normal INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE orders ADD COLUMN qty_retour INTEGER NOT NULL DEFAULT 0;
         END IF;
       END $$;
 
@@ -599,6 +609,8 @@ app.get('/api/orders/client/:clientId', async (req, res) => {
 app.post('/api/orders', async (req, res) => {
   const { client_id, recipient_id, comment } = req.body;
   const quantity = parseInt(req.body.quantity) || 0;
+  const qty_normal = parseInt(req.body.qty_normal) ?? (req.body.retour ? 0 : quantity);
+  const qty_retour = parseInt(req.body.qty_retour) ?? (req.body.retour ? quantity : 0);
   const retour = req.body.retour || false;
   const ml = monthLabel();
   try {
@@ -606,11 +618,11 @@ app.post('/api/orders', async (req, res) => {
       await pool.query('DELETE FROM orders WHERE client_id=$1 AND recipient_id=$2', [client_id, recipient_id]);
     } else {
       await pool.query(
-        `INSERT INTO orders (client_id, recipient_id, quantity, comment, retour, month_label)
-         VALUES ($1,$2,$3,$4,$5,$6)
+        `INSERT INTO orders (client_id, recipient_id, quantity, qty_normal, qty_retour, comment, retour, month_label)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (client_id, recipient_id)
-         DO UPDATE SET quantity=EXCLUDED.quantity, comment=EXCLUDED.comment, retour=EXCLUDED.retour, ordered_at=NOW(), month_label=EXCLUDED.month_label`,
-        [client_id, recipient_id, quantity, comment || '', retour, ml]
+         DO UPDATE SET quantity=EXCLUDED.quantity, qty_normal=EXCLUDED.qty_normal, qty_retour=EXCLUDED.qty_retour, comment=EXCLUDED.comment, retour=EXCLUDED.retour, ordered_at=NOW(), month_label=EXCLUDED.month_label`,
+        [client_id, recipient_id, quantity, qty_normal, qty_retour, comment || '', retour, ml]
       );
     }
     res.json({ success: true });
@@ -965,7 +977,8 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
               c.id as client_id_val, c.name as client_name, c.address as client_address,
               r.id as recipient_id_val, r.name as recipient_name,
               rc.id as recipient_client_id, rc.name as recipient_client_name, rc.address as recipient_client_address,
-              COALESCE(cr.paiement_course, false) as paiement_course
+              COALESCE(cr.paiement_course, false) as paiement_course,
+              o.qty_normal, o.qty_retour
        FROM orders o
        JOIN clients c ON c.id = o.client_id
        JOIN recipients r ON r.id = o.recipient_id
@@ -1119,7 +1132,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         }
         retourByRecip[recipClientId].senders.push({
           name: o.client_name,
-          qty: parseInt(o.quantity) || 0
+          qty: parseInt(o.qty_retour) || 0
         });
       });
 
@@ -1133,10 +1146,8 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
           recipientOrder.push(rid);
         }
-        // Only count non-retour colis in the qty
-        if (!o.retour) {
-          recipientTotals[rid].qty += parseInt(o.quantity) || 0;
-        }
+        // Only count normal (non-retour) colis
+        recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
       // Fetch addresses
       const recipIds = Object.keys(recipientTotals);

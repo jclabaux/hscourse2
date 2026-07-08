@@ -651,6 +651,8 @@ async function persistOrder(recipientId) {
     client_id: currentUser.id,
     recipient_id: recipientId,
     quantity: totalQty(o),
+    qty_normal: o.qty_normal || 0,
+    qty_retour: o.qty_retour || 0,
     comment: o.comment || '',
     retour: o.retour || false
   }});
