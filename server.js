@@ -1096,7 +1096,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
 
       // Aller orders: normal orders for aller clients
-      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id) && !o.retour);
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
       // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
@@ -1133,7 +1133,10 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
           recipientOrder.push(rid);
         }
-        recipientTotals[rid].qty += parseInt(o.quantity) || 0;
+        // Only count non-retour colis in the qty
+        if (!o.retour) {
+          recipientTotals[rid].qty += parseInt(o.quantity) || 0;
+        }
       });
       // Fetch addresses
       const recipIds = Object.keys(recipientTotals);
