@@ -1139,12 +1139,10 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
 
       // Build recipient summary: one row per recipient with total colis
       const recipientTotals = {};
-      const recipientOrder = [];
       allerOrders.forEach(o => {
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
-          recipientOrder.push(rid);
         }
         // Only count normal (non-retour) colis
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
@@ -1159,9 +1157,25 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
         });
       }
-      const seenRecips = new Set();
-      const orderedRecipients = recipientOrder
-        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
+      // Order recipients by their client's position in the sheet (paramétrage)
+      // Build position index: recipient_id -> position based on client order
+      const recipPositionIndex = {};
+      allerOrder.forEach((entry, clientPos) => {
+        const clientFilters = recipientFilters.rows.filter(
+          f => f.route_sheet_id === sheetId && f.client_id === entry.client_id
+        );
+        clientFilters.forEach((f, recipPos) => {
+          if (recipientTotals[f.recipient_id] && recipPositionIndex[f.recipient_id] === undefined) {
+            recipPositionIndex[f.recipient_id] = clientPos * 1000 + recipPos;
+          }
+        });
+      });
+      // Recipients not in filters get a high position (appear at end)
+      Object.keys(recipientTotals).forEach(rid => {
+        if (recipPositionIndex[rid] === undefined) recipPositionIndex[rid] = 999999;
+      });
+      const orderedRecipients = Object.keys(recipientTotals)
+        .sort((a, b) => (recipPositionIndex[a] ?? 999999) - (recipPositionIndex[b] ?? 999999))
         .map(rid => recipientTotals[rid]);
 
       result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
