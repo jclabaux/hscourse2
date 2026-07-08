@@ -1096,7 +1096,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
 
       // Aller orders: normal orders for aller clients
-      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id) && !o.retour);
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
       // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
