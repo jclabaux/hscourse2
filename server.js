@@ -1137,16 +1137,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       });
 
 
-      // Build recipient summary: one row per recipient with total colis
+      // Build recipient summary ordered by client position in sheet
       const recipientTotals = {};
-      const recipientOrder = [];
       allerOrders.forEach(o => {
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
-          recipientOrder.push(rid);
         }
-        // Only count normal (non-retour) colis
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
       // Fetch addresses
@@ -1159,10 +1156,24 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
         });
       }
+      // Build ordered list: iterate clients in their sheet order, then their recipients
       const seenRecips = new Set();
-      const orderedRecipients = recipientOrder
-        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
-        .map(rid => recipientTotals[rid]);
+      const orderedRecipients = [];
+      allerOrder.forEach(entry => {
+        // Get recipients for this client ordered by their appearance in allerOrders
+        allerOrders
+          .filter(o => o.client_id === entry.client_id)
+          .forEach(o => {
+            if (!seenRecips.has(o.recipient_id) && recipientTotals[o.recipient_id]) {
+              seenRecips.add(o.recipient_id);
+              orderedRecipients.push(recipientTotals[o.recipient_id]);
+            }
+          });
+      });
+      // Add any remaining recipients not covered above
+      Object.keys(recipientTotals).forEach(rid => {
+        if (!seenRecips.has(rid)) orderedRecipients.push(recipientTotals[rid]);
+      });
 
       result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
