@@ -1162,9 +1162,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       const orderedRecipients = [];
 
       // First pass: add recipients that are themselves clients in the sheet (in sheet order)
+      console.log('[ORDER] allerOrder:', allerOrder.map(e => e.client_id));
+      console.log('[ORDER] allerOrders recipient_client_ids:', allerOrders.map(o => o.recipient_name + '=' + o.recipient_client_id));
       allerOrder.forEach(entry => {
         // Find if this client appears as a recipient in allerOrders
         const asRecipient = allerOrders.find(o => o.recipient_client_id === entry.client_id);
+        console.log('[ORDER] entry.client_id:', entry.client_id, 'asRecipient:', asRecipient ? asRecipient.recipient_name : 'none');
         if (asRecipient && !seenRecips.has(asRecipient.recipient_id) && recipientTotals[asRecipient.recipient_id]) {
           seenRecips.add(asRecipient.recipient_id);
           orderedRecipients.push(recipientTotals[asRecipient.recipient_id]);
