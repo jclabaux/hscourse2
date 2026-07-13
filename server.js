@@ -1164,7 +1164,12 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
         .map(rid => recipientTotals[rid]);
 
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
+      // Sort retourSection by retour position (retourIndex maps client_id -> position)
+      const retourSectionSorted = Object.entries(retourByRecip)
+        .sort(([idA], [idB]) => (retourIndex[idA] ?? 999) - (retourIndex[idB] ?? 999))
+        .map(([, entry]) => entry);
+
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: retourSectionSorted, retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
 
     // "Autres" — clients with orders but not in any sheet
