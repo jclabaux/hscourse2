@@ -1384,7 +1384,7 @@ async function renderRouteSheets() {
           btnUp.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
           btnUp.textContent = '▲';
           btnUp.title = 'Monter';
-          (function(sid, cid) { btnUp.addEventListener('click', function() { moveClientInSheet(sid, cid, 'up'); }); })(sheet.id, c.id);
+          (function(sid, cid, ret) { btnUp.addEventListener('click', function() { moveClientInSheet(sid, cid, ret, 'up'); }); })(sheet.id, c.id, c.is_retour);
 
           const posInput = document.createElement('input');
           posInput.type = 'number';
@@ -1392,16 +1392,16 @@ async function renderRouteSheets() {
           posInput.value = c.position !== undefined ? c.position : 0;
           posInput.title = 'Position';
           posInput.style.cssText = 'width:48px;padding:3px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center;';
-          (function(sid, cid) {
-            posInput.addEventListener('change', function() { setClientPosition(sid, cid, posInput.value); });
+          (function(sid, cid, ret) {
+            posInput.addEventListener('change', function() { setClientPosition(sid, cid, ret, posInput.value); });
             posInput.addEventListener('click', function(e) { e.stopPropagation(); });
-          })(sheet.id, c.id);
+          })(sheet.id, c.id, c.is_retour);
 
           const btnDown = document.createElement('button');
           btnDown.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
           btnDown.textContent = '▼';
           btnDown.title = 'Descendre';
-          (function(sid, cid) { btnDown.addEventListener('click', function() { moveClientInSheet(sid, cid, 'down'); }); })(sheet.id, c.id);
+          (function(sid, cid, ret) { btnDown.addEventListener('click', function() { moveClientInSheet(sid, cid, ret, 'down'); }); })(sheet.id, c.id, c.is_retour);
 
           const orderBtns = document.createElement('div');
           orderBtns.style.cssText = 'display:flex;gap:4px;align-items:center;';
@@ -1618,30 +1618,31 @@ async function addClientToSheet(sheetId) {
   } catch(e) { toast('❌ ' + e.message); }
 }
 
-async function moveClientInSheet(sheetId, clientId, direction) {
+async function moveClientInSheet(sheetId, clientId, isRetour, direction) {
   try {
     const sheets = await api('route-sheets');
     const sheet = sheets.find(s => s.id === sheetId);
     if (!sheet) return;
     const clients = sheet.clients;
-    const idx = clients.findIndex(c => c.id === clientId);
+    // Match by both id AND is_retour to distinguish aller from retour
+    const idx = clients.findIndex(c => c.id === clientId && !!c.is_retour === !!isRetour);
     if (idx < 0) return;
     const newIdx = direction === 'up' ? idx - 1 : idx + 1;
     if (newIdx < 0 || newIdx >= clients.length) return;
     const clientA = clients[idx];
     const clientB = clients[newIdx];
     await Promise.all([
-      api('route-sheets/' + sheetId + '/clients/' + clientA.id + '/position', { method: 'PATCH', body: { position: newIdx } }),
-      api('route-sheets/' + sheetId + '/clients/' + clientB.id + '/position', { method: 'PATCH', body: { position: idx } })
+      api('route-sheets/' + sheetId + '/clients/' + clientA.id + '/position', { method: 'PATCH', body: { position: newIdx, is_retour: !!clientA.is_retour } }),
+      api('route-sheets/' + sheetId + '/clients/' + clientB.id + '/position', { method: 'PATCH', body: { position: idx, is_retour: !!clientB.is_retour } })
     ]);
     renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
 
-async function setClientPosition(sheetId, clientId, newPos) {
+async function setClientPosition(sheetId, clientId, isRetour, newPos) {
   try {
     await api('route-sheets/' + sheetId + '/clients/' + clientId + '/position', {
-      method: 'PATCH', body: { position: parseInt(newPos) }
+      method: 'PATCH', body: { position: parseInt(newPos), is_retour: !!isRetour }
     });
     renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }

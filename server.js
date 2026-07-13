@@ -905,11 +905,11 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, async (req, res) => {
-  const { position } = req.body;
+  const { position, is_retour } = req.body;
   try {
     await pool.query(
-      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3',
-      [position, req.params.id, req.params.clientId]
+      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3 AND is_retour=$4',
+      [position, req.params.id, req.params.clientId, is_retour || false]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -1137,13 +1137,16 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       });
 
 
-      // Build recipient summary ordered by client position in sheet
+      // Build recipient summary: one row per recipient with total colis
       const recipientTotals = {};
+      const recipientOrder = [];
       allerOrders.forEach(o => {
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
+          recipientOrder.push(rid);
         }
+        // Only count normal (non-retour) colis
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
       // Fetch addresses
@@ -1156,31 +1159,10 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
         });
       }
-      // Build ordered list based on client position in sheet
-      // Each client in allerOrder is potentially also a recipient - use their sheet position
       const seenRecips = new Set();
-      const orderedRecipients = [];
-
-      // First pass: add recipients that are themselves clients in the sheet (in sheet order)
-      console.log('[ORDER] allerOrder:', allerOrder.map(e => e.client_id));
-      console.log('[ORDER] allerOrders recipient_client_ids:', allerOrders.map(o => o.recipient_name + '=' + o.recipient_client_id));
-      allerOrder.forEach(entry => {
-        // Find if this client appears as a recipient in allerOrders
-        const asRecipient = allerOrders.find(o => o.recipient_client_id === entry.client_id);
-        console.log('[ORDER] entry.client_id:', entry.client_id, 'asRecipient:', asRecipient ? asRecipient.recipient_name : 'none');
-        if (asRecipient && !seenRecips.has(asRecipient.recipient_id) && recipientTotals[asRecipient.recipient_id]) {
-          seenRecips.add(asRecipient.recipient_id);
-          orderedRecipients.push(recipientTotals[asRecipient.recipient_id]);
-        }
-      });
-
-      // Second pass: add remaining recipients (not clients in this sheet) in order of appearance
-      allerOrders.forEach(o => {
-        if (!seenRecips.has(o.recipient_id) && recipientTotals[o.recipient_id]) {
-          seenRecips.add(o.recipient_id);
-          orderedRecipients.push(recipientTotals[o.recipient_id]);
-        }
-      });
+      const orderedRecipients = recipientOrder
+        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
+        .map(rid => recipientTotals[rid]);
 
       result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
