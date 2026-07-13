@@ -620,11 +620,7 @@ function setRetour(recipientId, val) {
   refreshRowUI(recipientId);
 }
 
-function setRetour(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
-  recipientOrders[recipientId].retour = val;
-  saveOrder(recipientId, true);
-}
+
 
 function totalQty(o) { return (o.qty_normal||0) + (o.qty_retour||0); }
 
