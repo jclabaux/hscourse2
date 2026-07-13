@@ -1468,7 +1468,8 @@ async function renderRouteSheets() {
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
         btnAdd.onclick = () => addClientToSheet(sheet.id);
-        // Aller/Retour toggle
+        // Aller/Retour toggle — declared before rebuildClientOptions uses it
+        const modeCb = document.createElement('input');
         modeCb.type = 'checkbox';
         modeCb.id = 'add-client-retour-' + sheet.id;
         modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
