@@ -275,9 +275,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
         </div>
       </div>
       <div id="recipients-container"></div>
-      <div style="height:80px;"></div>
     </div>
-    <div id="submit-bar" style="display:none;position:sticky;bottom:0;background:white;padding:14px 20px;box-shadow:0 -4px 20px rgba(0,0,0,0.08);border-top:1px solid var(--border);z-index:50;"><button class="btn btn-primary" style="width:100%;font-size:16px;padding:14px;" onclick="submitAllOrders()">✓ Valider mes commandes</button></div>
   </div>
 
   <!-- ADMIN VIEW -->
@@ -456,8 +454,7 @@ async function renderClientRecipients() {
       api('orders/client/' + currentUser.id)
     ]);
     recipientOrders = {};
-    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty_normal: o.retour ? 0 : o.quantity, qty_retour: o.retour ? o.quantity : 0, comment: o.comment || '', retour: o.retour || false }; });
-    updateSubmitBar();
+    orders.forEach(o => { recipientOrders[o.recipient_id] = { qty: o.quantity, comment: o.comment || '', retour: o.retour || false }; });
 
     if (recipients.length === 0) {
       container.innerHTML = '<div class="empty"><div class="empty-icon">📭</div><p>Aucun destinataire assigné.<br>Cliquez sur « Ajouter » pour en créer un.</p></div>';
@@ -469,8 +466,8 @@ async function renderClientRecipients() {
     table.innerHTML = `<div class="table-header"><div class="th">Destinataire</div><div class="th" style="text-align:center;">Colis</div><div class="th"></div></div>`;
 
     recipients.forEach(r => {
-      const o = recipientOrders[r.id] || { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-      const isSelected = (o.qty_normal||0)+(o.qty_retour||0) > 0;
+      const o = recipientOrders[r.id] || { qty: 0, comment: '' };
+      const isSelected = o.qty > 0;
       const rowId = 'row-' + r.id.replace(/-/g, '');
 
       const rowEl = document.createElement('div');
@@ -484,7 +481,7 @@ async function renderClientRecipients() {
           ${r.address || r.phone ? '<div class="row-sub">' + [r.address, r.phone].filter(Boolean).join(' · ') + '</div>' : ''}
         </div>
         <div class="row-qty">
-          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${(o.qty_normal||0)+(o.qty_retour||0)}</div>
+          <div class="qty-badge" id="badge-${r.id.replace(/-/g,'')}">${o.qty || 0}</div>
         </div>
         <div class="row-expand"><span class="expand-icon">⌄</span></div>`;
 
@@ -496,7 +493,7 @@ async function renderClientRecipients() {
           <div class="detail-label">Quantité</div>
           <div class="qty-controls">
             <button class="qty-btn" onclick="adjustQty('${r.id}', -1)">−</button>
-            <input type="number" class="qty-input" id="qty-${r.id.replace(/-/g,'')}" value="${o.qty_normal || 0}" min="0" max="999" onchange="setQtyInput('${r.id}', this.value)">
+            <input type="number" class="qty-input" id="qty-${r.id.replace(/-/g,'')}" value="${o.qty || 0}" min="0" max="999" onchange="setQtyInput('${r.id}', this.value)">
             <button class="qty-btn" onclick="adjustQty('${r.id}', 1)">+</button>
           </div>
           <div class="detail-label">Commentaire</div>
@@ -540,29 +537,6 @@ async function renderClientRecipients() {
 
       table.appendChild(rowEl);
       table.appendChild(detailEl);
-      (function(rid, oRef) {
-        setTimeout(function() {
-          var rowEl2 = document.getElementById('row-' + rid.replace(/-/g,''));
-          if (!rowEl2) return;
-          var nameDiv = rowEl2.querySelector('.row-name');
-          if (!nameDiv) return;
-          const modeCb = document.createElement('input');
-          modeCb.type = 'checkbox';
-          modeCb.id = 'retour-' + rid.replace(/-/g, '');
-          modeCb.checked = oRef.retour || false;
-          modeCb.style.cssText = 'width:14px;height:14px;accent-color:var(--blue);cursor:pointer;margin-left:10px;vertical-align:middle;';
-          modeCb.addEventListener('click', function(ev) { ev.stopPropagation(); ev.stopImmediatePropagation(); });
-          modeCb.addEventListener('change', function() { setRetour(rid, modeCb.checked); });
-          var lbl = document.createElement('label');
-          lbl.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-left:10px;cursor:pointer;font-size:12px;color:var(--ink2);';
-          lbl.appendChild(modeCb);
-          lbl.appendChild(document.createTextNode('Retour'));
-          lbl.addEventListener('click', function(ev) { ev.stopPropagation(); });
-          nameDiv.style.display = 'flex';
-          nameDiv.style.alignItems = 'center';
-          nameDiv.appendChild(lbl);
-        }, 0);
-      })(r.id, o);
     });
     container.innerHTML = '';
     container.appendChild(table);
@@ -572,13 +546,24 @@ async function renderClientRecipients() {
 }
 
 function toggleSelect(recipientId) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  var o = recipientOrders[recipientId];
-  o.qty_normal = (o.qty_normal||0) === 0 ? 1 : 0;
-  var key = recipientId.replace(/-/g, '');
-  var qtyInput = document.getElementById('qty-' + key);
-  if (qtyInput) qtyInput.value = o.qty_normal;
-  refreshRowUI(recipientId);
+  const key = recipientId.replace(/-/g, '');
+  const rowEl = document.getElementById('row-' + key);
+  const badge = document.getElementById('badge-' + key);
+  const qtyInput = document.getElementById('qty-' + key);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
+  const o = recipientOrders[recipientId];
+  if (o.qty > 0) {
+    o.qty = 0;
+    rowEl.classList.remove('selected');
+    badge.textContent = '0';
+    if (qtyInput) qtyInput.value = '0';
+  } else {
+    o.qty = 1;
+    rowEl.classList.add('selected');
+    badge.textContent = '1';
+    if (qtyInput) qtyInput.value = '1';
+  }
+  saveOrder(recipientId, true);
 }
 
 function toggleDetail(recipientId) {
@@ -592,85 +577,52 @@ function toggleDetail(recipientId) {
 }
 
 function adjustQty(recipientId, delta) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  var o = recipientOrders[recipientId];
-  o.qty_normal = Math.max(0, (o.qty_normal||0) + delta);
-  var key = recipientId.replace(/-/g, '');
-  var inp = document.getElementById('qty-' + key);
-  if (inp) inp.value = o.qty_normal;
-  refreshRowUI(recipientId);
+  const key = recipientId.replace(/-/g, '');
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
+  const o = recipientOrders[recipientId];
+  o.qty = Math.max(0, (o.qty || 0) + delta);
+  document.getElementById('qty-' + key).value = o.qty;
+  document.getElementById('badge-' + key).textContent = o.qty;
+  const rowEl = document.getElementById('row-' + key);
+  if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
+  saveOrder(recipientId, true);
 }
 
 function setQtyInput(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  var o = recipientOrders[recipientId];
-  o.qty_normal = Math.max(0, parseInt(val) || 0);
-  refreshRowUI(recipientId);
+  const key = recipientId.replace(/-/g, '');
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '' };
+  const o = recipientOrders[recipientId];
+  o.qty = Math.max(0, parseInt(val) || 0);
+  document.getElementById('badge-' + key).textContent = o.qty;
+  const rowEl = document.getElementById('row-' + key);
+  if (o.qty > 0) rowEl.classList.add('selected'); else rowEl.classList.remove('selected');
+  saveOrder(recipientId, true);
 }
 
 function setComment(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
   recipientOrders[recipientId].comment = val;
   saveOrder(recipientId, true);
 }
 
 function setRetour(recipientId, val) {
-  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  var o = recipientOrders[recipientId];
-  o.retour = val;
-  o.qty_retour = val ? 1 : 0;
-  refreshRowUI(recipientId);
+  if (!recipientOrders[recipientId]) recipientOrders[recipientId] = { qty: 0, comment: '', retour: false };
+  recipientOrders[recipientId].retour = val;
+  saveOrder(recipientId, true);
 }
 
-function totalQty(o) { return (o.qty_normal||0) + (o.qty_retour||0); }
-
-function updateSubmitBar() {
-  var hasOrders = Object.values(recipientOrders).some(function(o) { return totalQty(o) > 0; });
-  var bar = document.getElementById('submit-bar');
-  if (bar) bar.style.display = hasOrders ? 'block' : 'none';
-}
-
-function refreshRowUI(rid) {
-  var key = rid.replace(/-/g, '');
-  var o = recipientOrders[rid] || {};
-  var total = totalQty(o);
-  var badge = document.getElementById('badge-' + key);
-  if (badge) badge.textContent = total;
-  var row = document.getElementById('row-' + key);
-  if (row) { if (total > 0) row.classList.add('selected'); else row.classList.remove('selected'); }
-  updateSubmitBar();
-}
-
-function saveOrder(recipientId, silent) {
-  updateSubmitBar();
-}
-
-async function persistOrder(recipientId) {
-  var o = recipientOrders[recipientId] || { qty_normal: 0, qty_retour: 0, comment: '', retour: false };
-  await api('orders', { method: 'POST', body: {
-    client_id: currentUser.id,
-    recipient_id: recipientId,
-    quantity: totalQty(o),
-    qty_normal: o.qty_normal || 0,
-    qty_retour: o.qty_retour || 0,
-    comment: o.comment || '',
-    retour: o.retour || false
-  }});
-}
-
-async function submitAllOrders() {
-  var btn = document.querySelector('#submit-bar button');
-  if (!btn) return;
-  btn.disabled = true; btn.textContent = 'Enregistrement…';
+async function saveOrder(recipientId, silent = false) {
+  const o = recipientOrders[recipientId] || { qty: 0, comment: '' };
   try {
-    var keys = Object.keys(recipientOrders);
-    for (var i = 0; i < keys.length; i++) {
-      if (totalQty(recipientOrders[keys[i]]) > 0) await persistOrder(keys[i]);
-    }
-    toast('✓ Commandes validées');
-    updateSubmitBar();
+    await api('orders', { method: 'POST', body: {
+      client_id: currentUser.id,
+      recipient_id: recipientId,
+      quantity: parseInt(o.qty) || 0,
+      comment: o.comment || '',
+      retour: o.retour || false
+    }});
+    if (!silent) toast('✓ Enregistré');
   } catch(e) { toast('❌ ' + e.message); }
-  finally { btn.disabled = false; btn.textContent = '✓ Valider mes commandes'; }
 }
 
 // ── HISTORY MODAL (client) ────────────────────────────────
@@ -817,14 +769,14 @@ async function exportHistoryMonth(month) {
 
     const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
     const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-    const header = ['Client', 'Ville', 'Nb de colis', ...recipHeaders];
+    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
     const csvRows = [header];
     Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
       const recipNames = Object.entries(info.recipients)
         .sort((a,b) => a[0].localeCompare(b[0]))
         .map(([name]) => name);
       while (recipNames.length < maxRecip) recipNames.push('');
-      csvRows.push([clientName, info.address, '', ...recipNames]);
+      csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
     });
 
     const wb = XLSX.utils.book_new();
@@ -1363,12 +1315,46 @@ async function renderRouteSheets() {
           clientHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;';
           const clientTitle = document.createElement('div');
           clientTitle.style.cssText = 'font-weight:700;font-size:15px;';
-          clientTitle.textContent = '📦 ' + c.name;
+          clientTitle.textContent = (c.is_retour ? '🔄' : '📦') + ' ' + c.name;
+          const modeBadge = document.createElement('span');
+          modeBadge.textContent = c.is_retour ? 'Retour' : 'Aller';
+          modeBadge.style.cssText = 'font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;margin-left:8px;'
+            + (c.is_retour ? 'background:#fee2e2;color:#dc2626;' : 'background:#dbeafe;color:#2563eb;');
+          clientTitle.appendChild(modeBadge);
           const btnRetirer = document.createElement('button');
           btnRetirer.style.cssText = "background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;";
           btnRetirer.textContent = 'Retirer';
           btnRetirer.onclick = () => removeClientFromSheet(sheet.id, c.id);
-          clientHeader.append(clientTitle, btnRetirer);
+
+          // Position input + ▲▼ buttons
+          const btnUp = document.createElement('button');
+          btnUp.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
+          btnUp.textContent = '▲';
+          btnUp.title = 'Monter';
+          (function(sid, cid) { btnUp.addEventListener('click', function() { moveClientInSheet(sid, cid, 'up'); }); })(sheet.id, c.id);
+
+          const posInput = document.createElement('input');
+          posInput.type = 'number';
+          posInput.min = '0';
+          posInput.value = c.position !== undefined ? c.position : 0;
+          posInput.title = 'Position';
+          posInput.style.cssText = 'width:48px;padding:3px 6px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;text-align:center;';
+          (function(sid, cid) {
+            posInput.addEventListener('change', function() { setClientPosition(sid, cid, posInput.value); });
+            posInput.addEventListener('click', function(e) { e.stopPropagation(); });
+          })(sheet.id, c.id);
+
+          const btnDown = document.createElement('button');
+          btnDown.style.cssText = 'background:none;border:1.5px solid var(--border);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:14px;color:var(--ink2);';
+          btnDown.textContent = '▼';
+          btnDown.title = 'Descendre';
+          (function(sid, cid) { btnDown.addEventListener('click', function() { moveClientInSheet(sid, cid, 'down'); }); })(sheet.id, c.id);
+
+          const orderBtns = document.createElement('div');
+          orderBtns.style.cssText = 'display:flex;gap:4px;align-items:center;';
+          orderBtns.append(btnUp, posInput, btnDown);
+
+          clientHeader.append(clientTitle, orderBtns, btnRetirer);
           clientSection.appendChild(clientHeader);
 
           // Column headers for recipients
@@ -1484,7 +1470,15 @@ async function renderRouteSheets() {
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
         btnAdd.onclick = () => addClientToSheet(sheet.id);
-        addClientRow.append(sel, btnAdd);
+        // Aller/Retour toggle
+        const modeCb = document.createElement('input');
+        modeCb.type = 'checkbox';
+        modeCb.id = 'add-client-retour-' + sheet.id;
+        modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
+        const modeLabel = document.createElement('label');
+        modeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;';
+        modeLabel.append(modeCb, document.createTextNode(' Retour'));
+        addClientRow.append(sel, modeLabel, btnAdd);
         addClientSection.appendChild(addClientRow);
       } else {
         const p = document.createElement('p');
@@ -1549,11 +1543,42 @@ async function deleteRouteSheet(id, name) {
 
 async function addClientToSheet(sheetId) {
   const sel = document.getElementById('add-client-' + sheetId);
+  const modeCb = document.getElementById('add-client-retour-' + sheetId);
   const clientId = sel.value;
   if (!clientId) { toast('⚠️ Choisissez un client'); return; }
+  const is_retour = modeCb ? modeCb.checked : false;
   try {
-    await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId } });
-    toast('✓ Client ajouté'); renderRouteSheets();
+    await api('route-sheets/' + sheetId + '/clients', { method: 'POST', body: { client_id: clientId, is_retour } });
+    toast('✓ Client ajouté en mode ' + (is_retour ? 'Retour' : 'Aller')); renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function moveClientInSheet(sheetId, clientId, direction) {
+  try {
+    const sheets = await api('route-sheets');
+    const sheet = sheets.find(s => s.id === sheetId);
+    if (!sheet) return;
+    const clients = sheet.clients;
+    const idx = clients.findIndex(c => c.id === clientId);
+    if (idx < 0) return;
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (newIdx < 0 || newIdx >= clients.length) return;
+    const clientA = clients[idx];
+    const clientB = clients[newIdx];
+    await Promise.all([
+      api('route-sheets/' + sheetId + '/clients/' + clientA.id + '/position', { method: 'PATCH', body: { position: newIdx } }),
+      api('route-sheets/' + sheetId + '/clients/' + clientB.id + '/position', { method: 'PATCH', body: { position: idx } })
+    ]);
+    renderRouteSheets();
+  } catch(e) { toast('❌ ' + e.message); }
+}
+
+async function setClientPosition(sheetId, clientId, newPos) {
+  try {
+    await api('route-sheets/' + sheetId + '/clients/' + clientId + '/position', {
+      method: 'PATCH', body: { position: parseInt(newPos) }
+    });
+    renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }
 
@@ -1616,7 +1641,7 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || [], sheet.recipientSummary || []);
+          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || []);
           const ws = XLSX.utils.aoa_to_sheet(csvRows);
           // Auto column width
           const colWidths = csvRows[0].map((_, ci) => ({
@@ -1635,7 +1660,7 @@ async function exportByRoute() {
   ]);
 }
 
-function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipientSummary) {
+function buildExportRows(rows, relayEntries, retourOrders) {
   const byClient = {};
   rows.forEach(o => {
     if (!byClient[o.client_name]) byClient[o.client_name] = { address: o.client_address || '', totalQty: 0, recipients: {} };
@@ -1649,36 +1674,13 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Nb de colis', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
 
-  // Use clientOrder array to preserve server-side position order
-  const clientOrder = [];
-  const seen = new Set();
-  rows.forEach(o => { if (!seen.has(o.client_name)) { seen.add(o.client_name); clientOrder.push(o.client_name); } });
-  clientOrder.forEach(clientName => {
-    const info = byClient[clientName];
+  Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
     const recipNames = Object.entries(info.recipients).sort((a,b) => a[0].localeCompare(b[0])).map(([name]) => name);
     while (recipNames.length < colCount) recipNames.push('');
-    csvRows.push([clientName, info.address, '', ...recipNames]);
+    csvRows.push([clientName, info.address, info.totalQty, ...recipNames]);
   });
-
-  // Recipient summary rows
-  if (recipientSummary && recipientSummary.length > 0) {
-    recipientSummary.forEach(r => {
-      const emptyCols = Array(colCount).fill('');
-      csvRows.push([r.name, r.address, r.qty, ...emptyCols]);
-    });
-  }
-
-  // Retour section: destinataire en col A, expéditeur(s) en col D+
-  if (retourSection && retourSection.length > 0) {
-    retourSection.forEach(entry => {
-      const totalQty = entry.senders.reduce((sum, s) => sum + s.qty, 0);
-      const senderNames = entry.senders.map(s => s.name);
-      while (senderNames.length < colCount) senderNames.push('');
-      csvRows.push([entry.client_name, entry.client_address, totalQty, ...senderNames]);
-    });
-  }
 
   // Add relay rows if any
   if (relayEntries && relayEntries.length > 0) {
