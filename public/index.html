@@ -1262,7 +1262,11 @@ async function renderRouteSheets() {
     }
 
     sheets.forEach(sheet => {
-      const unassigned = clients.filter(c => !sheet.clients.find(sc => sc.id === c.id));
+      // A client can appear twice: once in Aller, once in Retour
+      const allerClientIds = new Set(sheet.clients.filter(sc => !sc.is_retour).map(sc => sc.id));
+      const retourClientIds = new Set(sheet.clients.filter(sc => sc.is_retour).map(sc => sc.id));
+      // Show all clients not present in BOTH modes
+      const unassigned = clients.filter(c => !allerClientIds.has(c.id) || !retourClientIds.has(c.id));
 
       // Card
       const card = document.createElement('div');
@@ -1460,21 +1464,32 @@ async function renderRouteSheets() {
         defOpt.value = '';
         defOpt.textContent = '— Choisir un client —';
         sel.appendChild(defOpt);
-        unassigned.forEach(c => {
-          const opt = document.createElement('option');
-          opt.value = c.id;
-          opt.textContent = c.name;
-          sel.appendChild(opt);
-        });
         const btnAdd = document.createElement('button');
         btnAdd.className = 'btn btn-primary btn-sm';
         btnAdd.textContent = 'Ajouter';
         btnAdd.onclick = () => addClientToSheet(sheet.id);
         // Aller/Retour toggle
-        const modeCb = document.createElement('input');
         modeCb.type = 'checkbox';
         modeCb.id = 'add-client-retour-' + sheet.id;
         modeCb.style.cssText = 'width:16px;height:16px;accent-color:var(--blue);cursor:pointer;';
+
+        // Rebuild options based on mode
+        function rebuildClientOptions() {
+          while (sel.options.length > 1) sel.remove(1);
+          const isRetour = modeCb.checked;
+          const existingIds = isRetour ? retourClientIds : allerClientIds;
+          unassigned.forEach(c => {
+            if (!existingIds.has(c.id)) {
+              const opt = document.createElement('option');
+              opt.value = c.id;
+              opt.textContent = c.name;
+              sel.appendChild(opt);
+            }
+          });
+        }
+        modeCb.addEventListener('change', rebuildClientOptions);
+        rebuildClientOptions();
+
         const modeLabel = document.createElement('label');
         modeLabel.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;';
         modeLabel.append(modeCb, document.createTextNode(' Retour'));
