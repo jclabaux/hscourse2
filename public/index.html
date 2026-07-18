@@ -1756,7 +1756,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
   if (recipientSummary && recipientSummary.length > 0) {
     recipientSummary.forEach(r => {
       const emptyCols = Array(colCount).fill('');
-      csvRows.push([r.name, r.address, r.qty, ...emptyCols]);
+      csvRows.push([r.name, r.address, r.qty || '', ...emptyCols]);
     });
   }
   // Retour section rows
@@ -1765,7 +1765,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
       const totalQty2 = entry.senders.reduce((sum, s) => sum + s.qty, 0);
       const senderNames = entry.senders.map(s => s.name);
       while (senderNames.length < colCount) senderNames.push('');
-      csvRows.push([entry.client_name, entry.client_address, totalQty2, ...senderNames]);
+      csvRows.push([entry.client_name, entry.client_address, totalQty2 || '', ...senderNames]);
     });
   }
   // Add relay rows if any
