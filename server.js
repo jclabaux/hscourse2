@@ -1141,12 +1141,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       const recipientTotals = {};
       const recipientOrder = [];
       allerOrders.forEach(o => {
+        // Skip A/R orders: they appear only in retour section
+        if ((o.qty_retour || 0) > 0) return;
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
           recipientOrder.push(rid);
         }
-        // Only count normal (non-retour) colis
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
       // Fetch addresses
