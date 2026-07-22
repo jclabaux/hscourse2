@@ -1770,7 +1770,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
   }
   // Add relay rows if any
   if (relayEntries && relayEntries.length > 0) {
-    const relayNames = relayEntries.map(r => r.client_name);
+    const relayNames = relayEntries.map(r => r.recipient_name || r.client_name);
     while (relayNames.length < colCount) relayNames.push('');
     csvRows.push(['', 'Relais', '', ...relayNames]);
     relayEntries.forEach(r => {

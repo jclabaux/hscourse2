@@ -1085,14 +1085,17 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           // Find matching orders for this client/recipient from any sheet
           const relayOrders = orders.rows.filter(o =>
             o.client_id === f.client_id && o.recipient_id === f.recipient_id
+            && (o.qty_normal || 0) > 0
           );
-          const qty = relayOrders.reduce((s, o) => s + parseInt(o.quantity || 0), 0);
+          const qty = relayOrders.reduce((s, o) => s + parseInt(o.qty_normal || 0), 0);
           if (qty > 0) {
             const order = relayOrders[0];
             relayEntries.push({
               client_id: f.client_id,
               client_name: order ? order.client_name : f.client_id,
               client_address: order ? (order.client_address || '') : '',
+              recipient_id: f.recipient_id,
+              recipient_name: order ? order.recipient_name : f.recipient_id,
               qty
             });
           }
