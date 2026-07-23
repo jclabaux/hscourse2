@@ -1377,7 +1377,7 @@ async function renderRouteSheets() {
           const btnRetirer = document.createElement('button');
           btnRetirer.style.cssText = "background:none;border:none;cursor:pointer;color:var(--red);font-size:13px;";
           btnRetirer.textContent = 'Retirer';
-          btnRetirer.onclick = () => removeClientFromSheet(sheet.id, c.id);
+          btnRetirer.onclick = () => removeClientFromSheet(sheet.id, c.id, c.is_retour);
 
           // Position input + ▲▼ buttons
           const btnUp = document.createElement('button');
@@ -1648,9 +1648,9 @@ async function setClientPosition(sheetId, clientId, isRetour, newPos) {
   } catch(e) { toast('❌ ' + e.message); }
 }
 
-async function removeClientFromSheet(sheetId, clientId) {
+async function removeClientFromSheet(sheetId, clientId, isRetour) {
   try {
-    await api('route-sheets/' + sheetId + '/clients/' + clientId, { method: 'DELETE' });
+    await api('route-sheets/' + sheetId + '/clients/' + clientId, { method: 'DELETE', body: { is_retour: !!isRetour } });
     toast('✓ Client retiré'); renderRouteSheets();
   } catch(e) { toast('❌ ' + e.message); }
 }

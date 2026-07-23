@@ -916,15 +916,18 @@ app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, asyn
 });
 
 app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
+  const is_retour = req.body.is_retour || false;
   try {
-    // Also remove all recipient assignments for this client in this sheet
+    // Only remove recipient assignments if removing aller (not retour)
+    if (!is_retour) {
+      await pool.query(
+        'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
+        [req.params.id, req.params.clientId]
+      );
+    }
     await pool.query(
-      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
-      [req.params.id, req.params.clientId]
-    );
-    await pool.query(
-      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
-      [req.params.id, req.params.clientId]
+      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2 AND is_retour=$3',
+      [req.params.id, req.params.clientId, is_retour]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
