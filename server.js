@@ -905,29 +905,26 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, async (req, res) => {
-  const { position, is_retour } = req.body;
+  const { position } = req.body;
   try {
     await pool.query(
-      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3 AND is_retour=$4',
-      [position, req.params.id, req.params.clientId, is_retour || false]
+      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3',
+      [position, req.params.id, req.params.clientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
 });
 
 app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
-  const is_retour = req.body.is_retour || false;
   try {
-    // Only remove recipient assignments if removing aller (not retour)
-    if (!is_retour) {
-      await pool.query(
-        'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
-        [req.params.id, req.params.clientId]
-      );
-    }
+    // Also remove all recipient assignments for this client in this sheet
     await pool.query(
-      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2 AND is_retour=$3',
-      [req.params.id, req.params.clientId, is_retour]
+      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
+    );
+    await pool.query(
+      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -1088,17 +1085,14 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           // Find matching orders for this client/recipient from any sheet
           const relayOrders = orders.rows.filter(o =>
             o.client_id === f.client_id && o.recipient_id === f.recipient_id
-            && (o.qty_normal || 0) > 0
           );
-          const qty = relayOrders.reduce((s, o) => s + parseInt(o.qty_normal || 0), 0);
+          const qty = relayOrders.reduce((s, o) => s + parseInt(o.quantity || 0), 0);
           if (qty > 0) {
             const order = relayOrders[0];
             relayEntries.push({
               client_id: f.client_id,
               client_name: order ? order.client_name : f.client_id,
               client_address: order ? (order.client_address || '') : '',
-              recipient_id: f.recipient_id,
-              recipient_name: order ? order.recipient_name : f.recipient_id,
               qty
             });
           }
@@ -1115,13 +1109,13 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
 
       // Aller orders: normal orders for aller clients
-      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id) && (o.qty_normal || 0) > 0);
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
       // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
       // The recipient's client_id must be in this sheet's allerClientIds (normal clients)
       const retourRows = orders.rows.filter(o => {
-        if ((o.qty_retour || 0) <= 0) return false;
+        if (!o.retour) return false;
         // recipient_client_id is the client_id of the recipient
         return sheet.clientIds.has(o.recipient_client_id);
       });
@@ -1138,21 +1132,23 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         }
         retourByRecip[recipClientId].senders.push({
           name: o.client_name,
-          qty: parseInt(o.qty_normal) || 0  // 0 if retour-only, qty_normal if aller+retour
+          qty: parseInt(o.qty_retour) || 0
         });
       });
 
 
-      // Build recipient summary: one row per recipient with total colis
+      // Build recipient summary ordered by recipient's client position in sheet
       const recipientTotals = {};
-      const recipientOrder = [];
       allerOrders.forEach(o => {
-        // Skip A/R orders: they appear only in retour section
-        if ((o.qty_retour || 0) > 0) return;
+        if ((o.qty_retour || 0) > 0) return; // skip A/R — appear in retour section
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
-          recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
-          recipientOrder.push(rid);
+          recipientTotals[rid] = {
+            name: o.recipient_name,
+            address: '',
+            qty: 0,
+            recipient_client_id: o.recipient_client_id
+          };
         }
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
@@ -1166,17 +1162,17 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
         });
       }
-      const seenRecips = new Set();
-      const orderedRecipients = recipientOrder
-        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
-        .map(rid => recipientTotals[rid]);
+      // Sort by recipient's client real position in sheet (from clientPositions)
+      const orderedRecipients = Object.keys(recipientTotals)
+        .map(rid => ({
+          rid,
+          pos: sheet.clientPositions[recipientTotals[rid].recipient_client_id + '_aller'] ?? 999999,
+          name: recipientTotals[rid].name
+        }))
+        .sort((a, b) => a.pos !== b.pos ? a.pos - b.pos : a.name.localeCompare(b.name))
+        .map(({ rid }) => recipientTotals[rid]);
 
-      // Sort retourSection by retour position (retourIndex maps client_id -> position)
-      const retourSectionSorted = Object.entries(retourByRecip)
-        .sort(([idA], [idB]) => (retourIndex[idA] ?? 999) - (retourIndex[idB] ?? 999))
-        .map(([, entry]) => entry);
-
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: retourSectionSorted, retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
     }
 
     // "Autres" — clients with orders but not in any sheet
