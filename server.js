@@ -1203,6 +1203,19 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   }
 });
 
+// ── TEMP: diagnostic recipient ───────────────────────────
+app.get('/api/admin/diagnostic-recipient', requireAdmin, async (req, res) => {
+  try {
+    const recip = await pool.query(
+      "SELECT r.id, r.name, r.client_id, c.name as client_name FROM recipients r LEFT JOIN clients c ON c.id = r.client_id WHERE r.name ILIKE '%ATLANTIQUE%'"
+    );
+    const clientPos = await pool.query(
+      "SELECT rsc.client_id, c.name, rsc.position, rsc.is_retour FROM route_sheet_clients rsc JOIN clients c ON c.id = rsc.client_id WHERE c.name ILIKE '%ATLANTIQUE%'"
+    );
+    res.json({ recipient: recip.rows, clientPosition: clientPos.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── TEMP: fix positions ──────────────────────────────────
 app.post('/api/admin/fix-positions', requireAdmin, async (req, res) => {
   try {
