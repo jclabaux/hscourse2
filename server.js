@@ -1059,8 +1059,23 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
         if (configuredElsewhere) return false;
-        // Not configured anywhere and not in another sheet: always include
-        // (will appear in col D+ and at end of recipient list)
+        // Not configured anywhere: include only in sheets where client has no filters at all
+        // This prevents unconfigured recipients from appearing in multiple sheets
+        const clientHasAnyFilters = recipientFilters.rows.some(
+          f => f.client_id === o.client_id
+        );
+        if (clientHasAnyFilters) {
+          // Client has some filters: only include if this sheet has the client
+          // and this recipient is not configured anywhere — include in this sheet only
+          // by checking if this client's primary sheet is this one
+          const clientSheets = [...new Set(
+            recipientFilters.rows
+              .filter(f => f.client_id === o.client_id)
+              .map(f => f.route_sheet_id)
+          )];
+          // Include unconfigured recipients only in the sheet not covered by filters
+          return !clientSheets.includes(sheetId) || filters.length === 0;
+        }
         return true;
       });
 
@@ -1144,6 +1159,16 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       const recipientTotals = {};
       allerOrders.forEach(o => {
         if ((o.qty_retour || 0) > 0) return; // skip A/R — appear in retour section
+        // Skip relay orders — they appear in the relay sheet's recipient list, not here
+        const filterForThis = recipientFilters.rows.find(
+          f => f.route_sheet_id === sheetId && f.client_id === o.client_id && f.recipient_id === o.recipient_id
+        );
+        if (filterForThis && filterForThis.relay_sheet_id) return;
+        // Skip if configured in another sheet (not this one and not a relay)
+        const configuredElsewhere = recipientFilters.rows.some(
+          f => f.route_sheet_id !== sheetId && f.client_id === o.client_id && f.recipient_id === o.recipient_id && !f.relay_sheet_id
+        );
+        if (configuredElsewhere) return;
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = {
