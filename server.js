@@ -975,7 +975,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     const orders = await dbClient.query(
       `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.retour, o.ordered_at, o.month_label,
               c.id as client_id_val, c.name as client_name, c.address as client_address,
-              r.id as recipient_id_val, r.name as recipient_name,
+              r.id as recipient_id_val, r.name as recipient_name, r.address as recipient_address,
               rc.id as recipient_client_id, rc.name as recipient_client_name, rc.address as recipient_client_address,
               COALESCE(cr.paiement_course, false) as paiement_course,
               o.qty_normal, o.qty_retour
@@ -1053,7 +1053,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         );
         // Is recipient explicitly in THIS sheet's filter list?
         const matchingFilter = filters.find(f => f.recipient_id === o.recipient_id);
-        if (matchingFilter) return !matchingFilter.relay_sheet_id;
+        if (matchingFilter) return true; // include relay orders in col D+ too
         // Is recipient configured for this client in ANOTHER sheet?
         const configuredElsewhere = recipientFilters.rows.some(
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
@@ -1094,6 +1094,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
               client_name: order ? order.client_name : f.client_id,
               client_address: order ? (order.client_address || '') : '',
               recipient_name: order ? order.recipient_name : f.recipient_id,
+              recipient_address: order ? (order.recipient_address || '') : '',
               qty
             });
           }

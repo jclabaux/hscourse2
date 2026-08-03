@@ -1775,7 +1775,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     csvRows.push(['', 'Relais', '', ...relayNames]);
     relayEntries.forEach(r => {
       const detailCols = Array(colCount).fill('');
-      csvRows.push([r.client_name, r.client_address, r.qty, ...detailCols]);
+      csvRows.push([r.recipient_name || r.client_name, r.recipient_address || r.client_address, r.qty, ...detailCols]);
     });
   }
 
