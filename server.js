@@ -1059,8 +1059,9 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
         if (configuredElsewhere) return false;
-        // Not configured anywhere: include only if client has no filters in this sheet
-        return filters.length === 0;
+        // Not configured anywhere and not in another sheet: always include
+        // (will appear in col D+ and at end of recipient list)
+        return true;
       });
 
       // Find retour orders for this sheet:
