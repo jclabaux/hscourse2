@@ -1059,24 +1059,17 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
         if (configuredElsewhere) return false;
-        // Not configured anywhere: include only in sheets where client has no filters at all
-        // This prevents unconfigured recipients from appearing in multiple sheets
-        const clientHasAnyFilters = recipientFilters.rows.some(
-          f => f.client_id === o.client_id
+        // Not configured anywhere: include only in the sheet where this client
+        // has the lowest position (his "primary" sheet)
+        // Find all sheets containing this client and their positions
+        const clientInSheets = assignments.rows
+          .filter(a => a.client_id === o.client_id && !a.is_retour)
+          .map(a => ({ sheet_id: a.route_sheet_id, position: a.position || 0 }));
+        if (clientInSheets.length === 0) return true; // client only in this sheet
+        const primarySheet = clientInSheets.reduce((min, s) =>
+          s.position < min.position ? s : min, clientInSheets[0]
         );
-        if (clientHasAnyFilters) {
-          // Client has some filters: only include if this sheet has the client
-          // and this recipient is not configured anywhere — include in this sheet only
-          // by checking if this client's primary sheet is this one
-          const clientSheets = [...new Set(
-            recipientFilters.rows
-              .filter(f => f.client_id === o.client_id)
-              .map(f => f.route_sheet_id)
-          )];
-          // Include unconfigured recipients only in the sheet not covered by filters
-          return !clientSheets.includes(sheetId) || filters.length === 0;
-        }
-        return true;
+        return primarySheet.sheet_id === sheetId;
       });
 
       // Find retour orders for this sheet:
