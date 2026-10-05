@@ -197,6 +197,31 @@ async function initDB() {
             UNIQUE(route_sheet_id, client_id, is_retour);
         END IF;
       END $$;
+      -- Migration: add qty_normal/qty_retour to orders if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='orders' AND column_name='qty_normal') THEN
+          ALTER TABLE orders ADD COLUMN qty_normal INTEGER NOT NULL DEFAULT 0;
+          ALTER TABLE orders ADD COLUMN qty_retour INTEGER NOT NULL DEFAULT 0;
+        END IF;
+      END $$;
+      -- Migration: add is_retour to route_sheet_clients if not exists
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+          WHERE table_name='route_sheet_clients' AND column_name='is_retour') THEN
+          ALTER TABLE route_sheet_clients ADD COLUMN is_retour BOOLEAN NOT NULL DEFAULT FALSE;
+        END IF;
+      END $$;
+      -- Migration: update unique constraint for is_retour
+      DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_route_sheet_id_client_id_key') THEN
+          ALTER TABLE route_sheet_clients DROP CONSTRAINT route_sheet_clients_route_sheet_id_client_id_key;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_sheet_client_retour_key') THEN
+          ALTER TABLE route_sheet_clients ADD CONSTRAINT route_sheet_clients_sheet_client_retour_key
+            UNIQUE(route_sheet_id, client_id, is_retour);
+        END IF;
+      END $$;
       -- Migration: add position to route_sheet_clients if not exists
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -905,26 +930,28 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, async (req, res) => {
-  const { position } = req.body;
+  const { position, is_retour } = req.body;
   try {
     await pool.query(
-      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3',
-      [position, req.params.id, req.params.clientId]
+      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3 AND is_retour=$4',
+      [position, req.params.id, req.params.clientId, is_retour || false]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
 });
 
 app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
+  const is_retour = req.body && req.body.is_retour || false;
   try {
-    // Also remove all recipient assignments for this client in this sheet
+    if (!is_retour) {
+      await pool.query(
+        'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
+        [req.params.id, req.params.clientId]
+      );
+    }
     await pool.query(
-      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
-      [req.params.id, req.params.clientId]
-    );
-    await pool.query(
-      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
-      [req.params.id, req.params.clientId]
+      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2 AND is_retour=$3',
+      [req.params.id, req.params.clientId, is_retour]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -975,7 +1002,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
     const orders = await dbClient.query(
       `SELECT o.client_id, o.recipient_id, o.quantity, o.comment, o.retour, o.ordered_at, o.month_label,
               c.id as client_id_val, c.name as client_name, c.address as client_address,
-              r.id as recipient_id_val, r.name as recipient_name, r.address as recipient_address,
+              r.id as recipient_id_val, r.name as recipient_name,
               rc.id as recipient_client_id, rc.name as recipient_client_name, rc.address as recipient_client_address,
               COALESCE(cr.paiement_course, false) as paiement_course,
               o.qty_normal, o.qty_retour
@@ -1053,23 +1080,14 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         );
         // Is recipient explicitly in THIS sheet's filter list?
         const matchingFilter = filters.find(f => f.recipient_id === o.recipient_id);
-        if (matchingFilter) return true; // include relay orders in col D+ too
+        if (matchingFilter) return !matchingFilter.relay_sheet_id;
         // Is recipient configured for this client in ANOTHER sheet?
         const configuredElsewhere = recipientFilters.rows.some(
           r => r.route_sheet_id !== sheetId && r.client_id === o.client_id && r.recipient_id === o.recipient_id
         );
         if (configuredElsewhere) return false;
-        // Not configured anywhere: include only in the sheet where this client
-        // has the lowest position (his "primary" sheet)
-        // Find all sheets containing this client and their positions
-        const clientInSheets = assignments.rows
-          .filter(a => a.client_id === o.client_id && !a.is_retour)
-          .map(a => ({ sheet_id: a.route_sheet_id, position: a.position || 0 }));
-        if (clientInSheets.length === 0) return true; // client only in this sheet
-        const primarySheet = clientInSheets.reduce((min, s) =>
-          s.position < min.position ? s : min, clientInSheets[0]
-        );
-        return primarySheet.sheet_id === sheetId;
+        // Not configured anywhere: include only if client has no filters in this sheet
+        return filters.length === 0;
       });
 
       // Find retour orders for this sheet:
@@ -1094,8 +1112,9 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           // Find matching orders for this client/recipient from any sheet
           const relayOrders = orders.rows.filter(o =>
             o.client_id === f.client_id && o.recipient_id === f.recipient_id
+            && (o.qty_normal || 0) > 0
           );
-          const qty = relayOrders.reduce((s, o) => s + parseInt(o.quantity || 0), 0);
+          const qty = relayOrders.reduce((s, o) => s + parseInt(o.qty_normal || 0), 0);
           if (qty > 0) {
             const order = relayOrders[0];
             relayEntries.push({
@@ -1120,7 +1139,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
 
       // Aller orders: normal orders for aller clients
-      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id) && (o.qty_normal || 0) > 0);
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
       // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
@@ -1151,43 +1170,32 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       // Build recipient summary ordered by recipient's client position in sheet
       const recipientTotals = {};
       allerOrders.forEach(o => {
-        if ((o.qty_retour || 0) > 0) return; // skip A/R — appear in retour section
-        // Skip relay orders — they appear in the relay sheet's recipient list, not here
+        if ((o.qty_retour || 0) > 0) return; // A/R goes to retour section
         const filterForThis = recipientFilters.rows.find(
           f => f.route_sheet_id === sheetId && f.client_id === o.client_id && f.recipient_id === o.recipient_id
         );
-        if (filterForThis && filterForThis.relay_sheet_id) return;
-        // Skip if configured in another sheet (not this one and not a relay)
-        const configuredElsewhere = recipientFilters.rows.some(
-          f => f.route_sheet_id !== sheetId && f.client_id === o.client_id && f.recipient_id === o.recipient_id && !f.relay_sheet_id
-        );
-        if (configuredElsewhere) return;
+        if (filterForThis && filterForThis.relay_sheet_id) return; // relay: not in aller section
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
           recipientTotals[rid] = {
             name: o.recipient_name,
-            address: '',
+            address: o.recipient_address || '',
             qty: 0,
             recipient_client_id: o.recipient_client_id
           };
         }
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
-      // Fetch addresses
-      const recipIds = Object.keys(recipientTotals);
-      if (recipIds.length > 0) {
-        const recipAddrs = await dbClient.query(
-          'SELECT id, address FROM recipients WHERE id = ANY($1)', [recipIds]
-        );
-        recipAddrs.rows.forEach(r => {
-          if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
-        });
-      }
-      // Sort by recipient's client real position in sheet (from clientPositions)
+      // Build position index: client_id -> real position in this sheet (aller)
+      const clientPosIndex = {};
+      assignments.rows.forEach(a => {
+        if (!a.is_retour) clientPosIndex[a.client_id] = a.position || 0;
+      });
+      // Sort by recipient's client position in sheet
       const orderedRecipients = Object.keys(recipientTotals)
         .map(rid => ({
           rid,
-          pos: sheet.clientPositions[recipientTotals[rid].recipient_client_id + '_aller'] ?? 999999,
+          pos: clientPosIndex[recipientTotals[rid].recipient_client_id] ?? 999999,
           name: recipientTotals[rid].name
         }))
         .sort((a, b) => a.pos !== b.pos ? a.pos - b.pos : a.name.localeCompare(b.name))
