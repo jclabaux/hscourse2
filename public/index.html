@@ -282,6 +282,9 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
 
   <!-- ADMIN VIEW -->
   <div id="admin-view" style="display:none;">
+    <div id="fdr-sticky-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;background:var(--blue);color:white;padding:8px 20px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+      <span id="fdr-sticky-name"></span>
+    </div>
     <div class="app-body">
       <div class="page-title" style="margin-bottom:20px;">Administration</div>
       <div class="tabs">
@@ -818,7 +821,7 @@ async function exportHistoryMonth(month) {
 
     const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
     const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-    const header = ['Client', 'Ville', 'Colis à déposer', ...recipHeaders];
+    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
     const csvRows = [header];
     Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
       const recipNames = Object.entries(info.recipients)
@@ -1554,6 +1557,23 @@ async function renderRouteSheets() {
 
       body.appendChild(addClientSection);
       card.appendChild(body);
+      (function(name) {
+        if (typeof IntersectionObserver !== 'undefined') {
+          var obs = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+              if (entry.isIntersecting) {
+                var banner = document.getElementById('fdr-sticky-banner');
+                var nameEl = document.getElementById('fdr-sticky-name');
+                if (banner && nameEl) {
+                  nameEl.textContent = 'Feuille de route : ' + name;
+                  banner.style.display = 'block';
+                }
+              }
+            });
+          }, { threshold: 0, rootMargin: '-56px 0px -70% 0px' });
+          obs.observe(card);
+        }
+      })(sheet.name);
       el.appendChild(card);
     });
 
@@ -1740,7 +1760,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Colis à déposer', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
 
   const clientOrder2 = [];
   const seen2 = new Set();
@@ -1844,6 +1864,8 @@ async function saveAdminPwd() {
 // ── ADMIN TAB SWITCHER ────────────────────────────────────
 function showAdminTab(tab) {
   activeAdminTab = tab;
+  var banner = document.getElementById('fdr-sticky-banner');
+  if (banner && tab !== 'routes') banner.style.display = 'none';
   document.querySelectorAll('.tab').forEach((t, i) => {
     t.classList.toggle('active', ['orders','history','clients','routes','settings'][i] === tab);
   });
