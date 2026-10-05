@@ -1186,11 +1186,14 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         }
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
-      // Build position index: client_id -> real position in this sheet (aller)
+      // Build position index: client_id -> real position in THIS sheet only (aller)
       const clientPosIndex = {};
       assignments.rows.forEach(a => {
-        if (!a.is_retour) clientPosIndex[a.client_id] = a.position || 0;
+        if (!a.is_retour && a.route_sheet_id === sheetId) {
+          clientPosIndex[a.client_id] = a.position || 0;
+        }
       });
+      console.log('[POSINDEX] sheet:', sheet.name, 'entries:', Object.keys(clientPosIndex).length);
       // Sort by recipient's client position in sheet
       const recipientsWithPos = Object.keys(recipientTotals)
         .map(rid => ({
