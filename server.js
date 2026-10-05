@@ -1192,12 +1192,16 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
         if (!a.is_retour) clientPosIndex[a.client_id] = a.position || 0;
       });
       // Sort by recipient's client position in sheet
-      const orderedRecipients = Object.keys(recipientTotals)
+      const recipientsWithPos = Object.keys(recipientTotals)
         .map(rid => ({
           rid,
           pos: clientPosIndex[recipientTotals[rid].recipient_client_id] ?? 999999,
-          name: recipientTotals[rid].name
-        }))
+          name: recipientTotals[rid].name,
+          rcid: recipientTotals[rid].recipient_client_id
+        }));
+      console.log('[SORT] sheet:', sheet.name, 'recipients:', recipientsWithPos.map(r => r.name + '=pos' + r.pos + '(rcid:' + r.rcid + ')'));
+      console.log('[SORT] clientPosIndex sample:', JSON.stringify(Object.entries(clientPosIndex).slice(0,5)));
+      const orderedRecipients = recipientsWithPos
         .sort((a, b) => a.pos !== b.pos ? a.pos - b.pos : a.name.localeCompare(b.name))
         .map(({ rid }) => recipientTotals[rid]);
 
