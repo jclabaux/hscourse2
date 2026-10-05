@@ -818,7 +818,7 @@ async function exportHistoryMonth(month) {
 
     const maxRecip = Math.max(...Object.values(byClient).map(c => Object.keys(c.recipients).length));
     const recipHeaders = Array.from({ length: maxRecip }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-    const header = ['Client', 'Ville', 'Nb de passage', ...recipHeaders];
+    const header = ['Client', 'Ville', 'Colis à déposer', ...recipHeaders];
     const csvRows = [header];
     Object.entries(byClient).sort((a,b) => a[0].localeCompare(b[0])).forEach(([clientName, info]) => {
       const recipNames = Object.entries(info.recipients)
@@ -1740,7 +1740,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     : 0;
   const colCount = Math.max(maxRecip, relayEntries && relayEntries.length > 0 ? relayEntries.length : 0);
   const recipHeaders = Array.from({ length: colCount }, (_, i) => i === 0 ? 'Fournisseurs' : '');
-  const csvRows = [['Client', 'Ville', 'Nb de passage', ...recipHeaders]];
+  const csvRows = [['Client', 'Ville', 'Colis à déposer', ...recipHeaders]];
 
   const clientOrder2 = [];
   const seen2 = new Set();
@@ -1775,7 +1775,7 @@ function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipi
     csvRows.push(['', 'Relais', '', ...relayNames]);
     relayEntries.forEach(r => {
       const detailCols = Array(colCount).fill('');
-      csvRows.push([r.recipient_name || r.client_name, r.recipient_address || r.client_address, r.qty, ...detailCols]);
+      csvRows.push([r.client_name, r.client_address, r.qty, ...detailCols]);
     });
   }
 
