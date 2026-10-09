@@ -282,9 +282,6 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
 
   <!-- ADMIN VIEW -->
   <div id="admin-view" style="display:none;">
-    <div id="fdr-sticky-banner" style="display:none;position:fixed;top:60px;left:0;right:0;z-index:200;background:var(--blue);color:white;padding:8px 20px;font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,0.15);">
-      <span id="fdr-sticky-name"></span>
-    </div>
     <div class="app-body">
       <div class="page-title" style="margin-bottom:20px;">Administration</div>
       <div class="tabs">
@@ -1556,24 +1553,111 @@ async function renderRouteSheets() {
       }
 
       body.appendChild(addClientSection);
-      card.appendChild(body);
-      (function(name) {
-        if (typeof IntersectionObserver !== 'undefined') {
-          var obs = new IntersectionObserver(function(entries) {
-            entries.forEach(function(entry) {
-              if (entry.isIntersecting) {
-                var banner = document.getElementById('fdr-sticky-banner');
-                var nameEl = document.getElementById('fdr-sticky-name');
-                if (banner && nameEl) {
-                  nameEl.textContent = 'Feuille de route : ' + name;
-                  banner.style.display = 'block';
-                }
-              }
-            });
-          }, { threshold: 0, rootMargin: '-56px 0px -70% 0px' });
-          obs.observe(card);
+
+      // ── Template Excel section ─────────────────────────────
+      const tmplSection = document.createElement('div');
+      tmplSection.style.cssText = 'border-top:2px solid var(--border);padding:14px 16px;background:var(--surface2);';
+
+      const tmplTitle = document.createElement('div');
+      tmplTitle.style.cssText = 'font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--ink2);margin-bottom:10px;';
+      tmplTitle.textContent = '📄 Template Excel';
+      tmplSection.appendChild(tmplTitle);
+
+      const tmplRow = document.createElement('div');
+      tmplRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+      tmplRow.id = 'tmpl-row-' + sheet.id;
+
+      // Async: check template existence then render buttons
+      (async function(sheetId, sheetName, row) {
+        let tmplInfo = { exists: false };
+        try { tmplInfo = await api('route-sheets/' + sheetId + '/template/exists'); } catch(e) {}
+
+        function renderTmpl() {
+          row.innerHTML = '';
+          if (tmplInfo.exists) {
+            const statusSpan = document.createElement('span');
+            statusSpan.style.cssText = 'font-size:12px;color:var(--green);';
+            const d = new Date(tmplInfo.uploaded_at);
+            statusSpan.textContent = '✓ ' + tmplInfo.file_name + ' (mis à jour le ' + d.toLocaleDateString('fr-FR') + ')';
+            row.appendChild(statusSpan);
+
+            const btnDl = document.createElement('button');
+            btnDl.className = 'btn btn-secondary btn-sm';
+            btnDl.textContent = '⬇ Télécharger';
+            btnDl.onclick = async () => {
+              try {
+                const r = await fetch('/api/route-sheets/' + sheetId + '/template', {
+                  headers: { 'x-admin-token': adminToken || 'admin-ok' }
+                });
+                if (!r.ok) throw new Error('Erreur téléchargement');
+                const blob = await r.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = tmplInfo.file_name;
+                document.body.appendChild(a); a.click();
+                document.body.removeChild(a); URL.revokeObjectURL(url);
+              } catch(e) { toast('❌ ' + e.message); }
+            };
+            row.appendChild(btnDl);
+
+            const btnDel = document.createElement('button');
+            btnDel.className = 'btn btn-danger btn-sm';
+            btnDel.textContent = '🗑 Supprimer';
+            btnDel.onclick = async () => {
+              if (!confirm('Supprimer la template de "' + sheetName + '" ?')) return;
+              try {
+                await api('route-sheets/' + sheetId + '/template', { method: 'DELETE' });
+                tmplInfo = { exists: false }; renderTmpl(); toast('✓ Template supprimée');
+              } catch(e) { toast('❌ ' + e.message); }
+            };
+            row.appendChild(btnDel);
+          } else {
+            const noTmpl = document.createElement('span');
+            noTmpl.style.cssText = 'font-size:12px;color:var(--ink3);font-style:italic;';
+            noTmpl.textContent = 'Aucune template — l\'export utilisera la génération automatique';
+            row.appendChild(noTmpl);
+          }
+
+          // Always show upload button
+          const fileInput = document.createElement('input');
+          fileInput.type = 'file';
+          fileInput.accept = '.xlsx';
+          fileInput.style.display = 'none';
+          fileInput.onchange = async () => {
+            const file = fileInput.files[0];
+            if (!file) return;
+            try {
+              // Read file as base64
+              const b64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = e => resolve(e.target.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              });
+              await api('route-sheets/' + sheetId + '/template', {
+                method: 'POST',
+                body: { file_data: b64, file_name: file.name }
+              });
+              tmplInfo = { exists: true, file_name: file.name, uploaded_at: new Date().toISOString() };
+              renderTmpl(); toast('✓ Template uploadée');
+            } catch(e) { toast('❌ ' + e.message); }
+          };
+          row.appendChild(fileInput);
+
+          const btnUp = document.createElement('button');
+          btnUp.className = 'btn btn-primary btn-sm';
+          btnUp.textContent = tmplInfo.exists ? '⬆ Remplacer' : '⬆ Uploader une template';
+          btnUp.onclick = () => { fileInput.value = ''; fileInput.click(); };
+          row.appendChild(btnUp);
         }
-      })(sheet.name);
+        renderTmpl();
+      })(sheet.id, sheet.name, tmplRow);
+
+      tmplSection.appendChild(tmplRow);
+      body.appendChild(tmplSection);
+      // ── End template section ───────────────────────────────
+
+      card.appendChild(body);
       el.appendChild(card);
     });
 
@@ -1727,16 +1811,25 @@ async function exportByRoute() {
         // Create one Excel workbook with one sheet per feuille de route
         const wb = XLSX.utils.book_new();
         sheetsWithData.forEach(sheet => {
-          const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || [], sheet.recipientSummary || []);
-          const ws = XLSX.utils.aoa_to_sheet(csvRows);
-          // Auto column width
-          const colWidths = csvRows[0].map((_, ci) => ({
-            wch: Math.max(...csvRows.map(r => String(r[ci] || '').length), 10)
-          }));
-          ws['!cols'] = colWidths;
-          // Sheet name max 31 chars (Excel limit), strip invalid chars
           const sheetName = sheet.name.replace(/[:\/?*\[\]]/g, '').substring(0, 31);
-          XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          if (sheet.templateData) {
+            // Use template: load it, inject data into matching rows
+            const tmplBuf = Uint8Array.from(atob(sheet.templateData), c => c.charCodeAt(0));
+            const tmplWb = XLSX.read(tmplBuf, { type: 'array', cellStyles: true });
+            const tmplWsName = tmplWb.SheetNames[0];
+            const ws = tmplWb.Sheets[tmplWsName];
+            fillTemplateSheet(ws, sheet.rows, sheet.relayEntries || [], sheet.retourSection || [], sheet.recipientSummary || []);
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          } else {
+            // No template: generate from scratch
+            const csvRows = buildExportRows(sheet.rows, sheet.relayEntries || [], sheet.retourOrders || [], sheet.retourSection || [], sheet.recipientSummary || []);
+            const ws = XLSX.utils.aoa_to_sheet(csvRows);
+            const colWidths = csvRows[0].map((_, ci) => ({
+              wch: Math.max(...csvRows.map(r => String(r[ci] || '').length), 10)
+            }));
+            ws['!cols'] = colWidths;
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+          }
         });
         XLSX.writeFile(wb, 'commandes_' + dateStr + '.xlsx');
         toast('✓ Export téléchargé (' + sheetsWithData.length + ' feuille' + (sheetsWithData.length > 1 ? 's' : '') + ') — commandes réinitialisées');
@@ -1744,6 +1837,105 @@ async function exportByRoute() {
       } catch(e) { toast('❌ ' + e.message); }
     }}
   ]);
+}
+
+// Fill a template worksheet with order data
+// Template has col A = name, col B = address (pre-filled)
+// We write col C = nb colis, col D+ = fournisseurs
+function fillTemplateSheet(ws, rows, relayEntries, retourSection, recipientSummary) {
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:Z100');
+
+  // Build lookup maps from order data
+  // recipientSummary: [{ name, address, qty }]
+  const recipMap = {}; // name (lowercase) -> { qty, suppliers: [] }
+  if (recipientSummary) {
+    recipientSummary.forEach(r => {
+      recipMap[r.name.trim().toLowerCase()] = { qty: r.qty || 0, suppliers: [] };
+    });
+  }
+
+  // Build supplier list per recipient
+  // rows: allerOrders — each order has client_name and recipient_name
+  const suppliersByRecip = {}; // recipient_name lowercase -> [client_name]
+  rows.forEach(o => {
+    const key = (o.recipient_name || '').trim().toLowerCase();
+    if (!suppliersByRecip[key]) suppliersByRecip[key] = [];
+    if (!suppliersByRecip[key].includes(o.client_name)) {
+      suppliersByRecip[key].push(o.client_name);
+    }
+    if (recipMap[key]) {
+      recipMap[key].suppliers = suppliersByRecip[key];
+    }
+  });
+
+  // Build retour section map: name -> { qty, senders }
+  const retourMap = {};
+  if (retourSection) {
+    retourSection.forEach(entry => {
+      const key = (entry.client_name || '').trim().toLowerCase();
+      const totalQty = entry.senders.reduce((s, x) => s + (x.qty || 0), 0);
+      retourMap[key] = { qty: totalQty, senders: entry.senders.map(s => s.name) };
+    });
+  }
+
+  // Build relay map: recipient name -> relay info
+  const relayRecipNames = (relayEntries || []).map(r => (r.recipient_name || r.client_name || '').trim().toLowerCase());
+
+  // Iterate each row of the template
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    const cellA = ws[XLSX.utils.encode_cell({ r: R, c: 0 })];
+    if (!cellA || !cellA.v) continue;
+    const nameRaw = String(cellA.v).trim();
+    const nameLow = nameRaw.toLowerCase();
+
+    // Try matching against recipient summary
+    if (recipMap[nameLow]) {
+      const info = recipMap[nameLow];
+      // Col C: nb colis
+      const cellC = XLSX.utils.encode_cell({ r: R, c: 2 });
+      ws[cellC] = { t: 'n', v: info.qty };
+      // Col D+: supplier names
+      info.suppliers.forEach((sup, i) => {
+        const cellD = XLSX.utils.encode_cell({ r: R, c: 3 + i });
+        ws[cellD] = { t: 's', v: sup };
+      });
+      continue;
+    }
+
+    // Try matching against retour section
+    if (retourMap[nameLow]) {
+      const info = retourMap[nameLow];
+      const cellC = XLSX.utils.encode_cell({ r: R, c: 2 });
+      if (info.qty > 0) ws[cellC] = { t: 'n', v: info.qty };
+      info.senders.forEach((s, i) => {
+        const cellD = XLSX.utils.encode_cell({ r: R, c: 3 + i });
+        ws[cellD] = { t: 's', v: s };
+      });
+    }
+  }
+
+  // Handle relay row: find a "Relais" marker row or append after last data row
+  if (relayEntries && relayEntries.length > 0) {
+    // Look for a row where col B = "Relais" or col A contains "Relais"
+    let relayRow = -1;
+    for (let R = range.s.r; R <= range.e.r; R++) {
+      const cellA = ws[XLSX.utils.encode_cell({ r: R, c: 0 })];
+      const cellB = ws[XLSX.utils.encode_cell({ r: R, c: 1 })];
+      const aVal = cellA ? String(cellA.v || '').toLowerCase() : '';
+      const bVal = cellB ? String(cellB.v || '').toLowerCase() : '';
+      if (aVal === 'relais' || bVal === 'relais') { relayRow = R; break; }
+    }
+    if (relayRow >= 0) {
+      relayEntries.forEach((r, i) => {
+        const cellD = XLSX.utils.encode_cell({ r: relayRow, c: 3 + i });
+        ws[cellD] = { t: 's', v: r.recipient_name || r.client_name || '' };
+      });
+    }
+  }
+
+  // Update sheet range to cover written cells
+  const maxCol = Math.max(range.e.c, 3 + (relayEntries ? relayEntries.length : 0) + 5);
+  ws['!ref'] = XLSX.utils.encode_range({ s: range.s, e: { r: range.e.r, c: maxCol } });
 }
 
 function buildExportRows(rows, relayEntries, retourOrders, retourSection, recipientSummary) {
@@ -1864,8 +2056,6 @@ async function saveAdminPwd() {
 // ── ADMIN TAB SWITCHER ────────────────────────────────────
 function showAdminTab(tab) {
   activeAdminTab = tab;
-  var banner = document.getElementById('fdr-sticky-banner');
-  if (banner && tab !== 'routes') banner.style.display = 'none';
   document.querySelectorAll('.tab').forEach((t, i) => {
     t.classList.toggle('active', ['orders','history','clients','routes','settings'][i] === tab);
   });

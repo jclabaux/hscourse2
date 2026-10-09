@@ -197,31 +197,6 @@ async function initDB() {
             UNIQUE(route_sheet_id, client_id, is_retour);
         END IF;
       END $$;
-      -- Migration: add qty_normal/qty_retour to orders if not exists
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-          WHERE table_name='orders' AND column_name='qty_normal') THEN
-          ALTER TABLE orders ADD COLUMN qty_normal INTEGER NOT NULL DEFAULT 0;
-          ALTER TABLE orders ADD COLUMN qty_retour INTEGER NOT NULL DEFAULT 0;
-        END IF;
-      END $$;
-      -- Migration: add is_retour to route_sheet_clients if not exists
-      DO $$ BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
-          WHERE table_name='route_sheet_clients' AND column_name='is_retour') THEN
-          ALTER TABLE route_sheet_clients ADD COLUMN is_retour BOOLEAN NOT NULL DEFAULT FALSE;
-        END IF;
-      END $$;
-      -- Migration: update unique constraint for is_retour
-      DO $$ BEGIN
-        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_route_sheet_id_client_id_key') THEN
-          ALTER TABLE route_sheet_clients DROP CONSTRAINT route_sheet_clients_route_sheet_id_client_id_key;
-        END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'route_sheet_clients_sheet_client_retour_key') THEN
-          ALTER TABLE route_sheet_clients ADD CONSTRAINT route_sheet_clients_sheet_client_retour_key
-            UNIQUE(route_sheet_id, client_id, is_retour);
-        END IF;
-      END $$;
       -- Migration: add position to route_sheet_clients if not exists
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns
@@ -262,6 +237,14 @@ async function initDB() {
         END IF;
       END $$;
 
+      CREATE TABLE IF NOT EXISTS route_sheet_templates (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        route_sheet_id UUID REFERENCES route_sheets(id) ON DELETE CASCADE UNIQUE,
+        file_data BYTEA NOT NULL,
+        file_name TEXT NOT NULL DEFAULT 'template.xlsx',
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       INSERT INTO config (key, value) VALUES
         ('admin_password', 'admin123'),
         ('start_hour', '6'),
@@ -281,7 +264,9 @@ function monthLabel(date) {
 }
 
 function requireAdmin(req, res, next) {
-  if (req.headers['x-admin-token'] !== 'admin-ok') {
+  // Accept token via header or query param (query param needed for file downloads via <a>)
+  const token = req.headers['x-admin-token'] || req.query['admin-token'];
+  if (token !== 'admin-ok') {
     return res.status(401).json({ error: 'Non autorisé' });
   }
   next();
@@ -930,28 +915,26 @@ app.post('/api/route-sheets/:id/clients', requireAdmin, async (req, res) => {
 });
 
 app.patch('/api/route-sheets/:id/clients/:clientId/position', requireAdmin, async (req, res) => {
-  const { position, is_retour } = req.body;
+  const { position } = req.body;
   try {
     await pool.query(
-      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3 AND is_retour=$4',
-      [position, req.params.id, req.params.clientId, is_retour || false]
+      'UPDATE route_sheet_clients SET position=$1 WHERE route_sheet_id=$2 AND client_id=$3',
+      [position, req.params.id, req.params.clientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
 });
 
 app.delete('/api/route-sheets/:id/clients/:clientId', requireAdmin, async (req, res) => {
-  const is_retour = req.body && req.body.is_retour || false;
   try {
-    if (!is_retour) {
-      await pool.query(
-        'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
-        [req.params.id, req.params.clientId]
-      );
-    }
+    // Also remove all recipient assignments for this client in this sheet
     await pool.query(
-      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2 AND is_retour=$3',
-      [req.params.id, req.params.clientId, is_retour]
+      'DELETE FROM route_sheet_client_recipients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
+    );
+    await pool.query(
+      'DELETE FROM route_sheet_clients WHERE route_sheet_id=$1 AND client_id=$2',
+      [req.params.id, req.params.clientId]
     );
     res.json({ success: true });
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
@@ -1112,17 +1095,14 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
           // Find matching orders for this client/recipient from any sheet
           const relayOrders = orders.rows.filter(o =>
             o.client_id === f.client_id && o.recipient_id === f.recipient_id
-            && (o.qty_normal || 0) > 0
           );
-          const qty = relayOrders.reduce((s, o) => s + parseInt(o.qty_normal || 0), 0);
+          const qty = relayOrders.reduce((s, o) => s + parseInt(o.quantity || 0), 0);
           if (qty > 0) {
             const order = relayOrders[0];
             relayEntries.push({
               client_id: f.client_id,
               client_name: order ? order.client_name : f.client_id,
               client_address: order ? (order.client_address || '') : '',
-              recipient_name: order ? order.recipient_name : f.recipient_id,
-              recipient_address: order ? (order.recipient_address || '') : '',
               qty
             });
           }
@@ -1139,7 +1119,7 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       retourOrder.forEach((e, i) => { retourIndex[e.client_id] = i; });
 
       // Aller orders: normal orders for aller clients
-      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id) && (o.qty_normal || 0) > 0);
+      const allerOrders = sheetOrders.filter(o => allerClientIds.has(o.client_id));
       allerOrders.sort((a, b) => (allerIndex[a.client_id] ?? 999) - (allerIndex[b.client_id] ?? 999));
 
       // Retour orders: orders flagged as retour where the recipient's client is assigned to this sheet
@@ -1167,48 +1147,41 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
       });
 
 
-      // Build recipient summary ordered by recipient's client position in sheet
+      // Build recipient summary: one row per recipient with total colis
       const recipientTotals = {};
+      const recipientOrder = [];
       allerOrders.forEach(o => {
-        if ((o.qty_retour || 0) > 0) return; // A/R goes to retour section
-        const filterForThis = recipientFilters.rows.find(
-          f => f.route_sheet_id === sheetId && f.client_id === o.client_id && f.recipient_id === o.recipient_id
-        );
-        if (filterForThis && filterForThis.relay_sheet_id) return; // relay: not in aller section
         const rid = o.recipient_id;
         if (!recipientTotals[rid]) {
-          recipientTotals[rid] = {
-            name: o.recipient_name,
-            address: o.recipient_address || '',
-            qty: 0,
-            recipient_client_id: o.recipient_client_id
-          };
+          recipientTotals[rid] = { name: o.recipient_name, address: '', qty: 0 };
+          recipientOrder.push(rid);
         }
+        // Only count normal (non-retour) colis
         recipientTotals[rid].qty += parseInt(o.qty_normal) || 0;
       });
-      // Build position index: client_id -> real position in THIS sheet only (aller)
-      const clientPosIndex = {};
-      assignments.rows.forEach(a => {
-        if (!a.is_retour && a.route_sheet_id === sheetId) {
-          clientPosIndex[a.client_id] = a.position || 0;
-        }
-      });
-      console.log('[POSINDEX] sheet:', sheet.name, 'entries:', Object.keys(clientPosIndex).length);
-      // Sort by recipient's client position in sheet
-      const recipientsWithPos = Object.keys(recipientTotals)
-        .map(rid => ({
-          rid,
-          pos: clientPosIndex[recipientTotals[rid].recipient_client_id] ?? 999999,
-          name: recipientTotals[rid].name,
-          rcid: recipientTotals[rid].recipient_client_id
-        }));
-      console.log('[SORT] sheet:', sheet.name, 'recipients:', recipientsWithPos.map(r => r.name + '=pos' + r.pos + '(rcid:' + r.rcid + ')'));
-      console.log('[SORT] clientPosIndex sample:', JSON.stringify(Object.entries(clientPosIndex).slice(0,5)));
-      const orderedRecipients = recipientsWithPos
-        .sort((a, b) => a.pos !== b.pos ? a.pos - b.pos : a.name.localeCompare(b.name))
-        .map(({ rid }) => recipientTotals[rid]);
+      // Fetch addresses
+      const recipIds = Object.keys(recipientTotals);
+      if (recipIds.length > 0) {
+        const recipAddrs = await dbClient.query(
+          'SELECT id, address FROM recipients WHERE id = ANY($1)', [recipIds]
+        );
+        recipAddrs.rows.forEach(r => {
+          if (recipientTotals[r.id]) recipientTotals[r.id].address = r.address || '';
+        });
+      }
+      const seenRecips = new Set();
+      const orderedRecipients = recipientOrder
+        .filter(rid => { if (seenRecips.has(rid)) return false; seenRecips.add(rid); return true; })
+        .map(rid => recipientTotals[rid]);
 
-      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients });
+      // Fetch template for this sheet if exists
+      const tmplResult = await dbClient.query(
+        'SELECT file_data FROM route_sheet_templates WHERE route_sheet_id=$1',
+        [sheetId]
+      );
+      const templateData = tmplResult.rows.length > 0 ? tmplResult.rows[0].file_data.toString('base64') : null;
+
+      result.push({ name: sheet.name, rows: allerOrders, relayEntries, retourOrders, retourSection: Object.values(retourByRecip), retourOrder: retourIndex, clientPositions: sheet.clientPositions, recipientSummary: orderedRecipients, templateData });
     }
 
     // "Autres" — clients with orders but not in any sheet
@@ -1237,6 +1210,62 @@ app.post('/api/orders/export-by-route', requireAdmin, async (req, res) => {
   } finally {
     dbClient.release();
   }
+});
+
+// ── Templates Excel par feuille de route ─────────────────
+
+// Upload template pour une FDR (body: { file_data: base64, file_name: string })
+app.post('/api/route-sheets/:id/template', requireAdmin, async (req, res) => {
+  const { file_data, file_name } = req.body;
+  if (!file_data || !file_name) return res.status(400).json({ error: 'file_data et file_name requis' });
+  try {
+    const buf = Buffer.from(file_data, 'base64');
+    await pool.query(
+      `INSERT INTO route_sheet_templates (route_sheet_id, file_data, file_name)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (route_sheet_id)
+       DO UPDATE SET file_data=EXCLUDED.file_data, file_name=EXCLUDED.file_name, uploaded_at=NOW()`,
+      [req.params.id, buf, file_name]
+    );
+    res.json({ success: true, file_name });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+// Télécharger template d'une FDR
+app.get('/api/route-sheets/:id/template', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT file_data, file_name FROM route_sheet_templates WHERE route_sheet_id=$1',
+      [req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Aucune template' });
+    const { file_data, file_name } = result.rows[0];
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${file_name}"`);
+    res.send(file_data);
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+// Vérifier si template existe pour une FDR
+app.get('/api/route-sheets/:id/template/exists', requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT file_name, uploaded_at FROM route_sheet_templates WHERE route_sheet_id=$1',
+      [req.params.id]
+    );
+    res.json(result.rows.length > 0
+      ? { exists: true, file_name: result.rows[0].file_name, uploaded_at: result.rows[0].uploaded_at }
+      : { exists: false }
+    );
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
+// Supprimer template d'une FDR
+app.delete('/api/route-sheets/:id/template', requireAdmin, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM route_sheet_templates WHERE route_sheet_id=$1', [req.params.id]);
+    res.json({ success: true });
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
 });
 
 // ── TEMP: fix positions ──────────────────────────────────
