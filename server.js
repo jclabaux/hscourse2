@@ -1306,3 +1306,4 @@ initDB().then(() => {
   console.error('Erreur démarrage:', e);
   process.exit(1);
 });
+
