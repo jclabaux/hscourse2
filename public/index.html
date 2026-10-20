@@ -81,6 +81,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
 #app.visible { display: flex; }
 
 .app-nav { background: var(--ink); padding: 0 20px; display: flex; align-items: center; justify-content: space-between; height: 60px; position: sticky; top: 0; z-index: 100; box-shadow: 0 2px 12px rgba(0,0,0,0.2); }
+#fdr-sticky-banner { display: none; position: sticky; top: 60px; z-index: 99; background: var(--blue); color: #fff; font-size: 13px; font-weight: 700; padding: 7px 20px; letter-spacing: 0.5px; box-shadow: 0 2px 8px rgba(37,99,235,0.18); pointer-events: none; }
 .nav-brand { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -0.5px; }
 .nav-brand span { color: var(--blue); }
 .nav-right { display: flex; align-items: center; gap: 12px; }
@@ -260,6 +261,7 @@ body { font-family: 'Epilogue', sans-serif; background: var(--bg); color: var(--
       <button class="nav-logout" onclick="doLogout()">Déconnexion</button>
     </div>
   </nav>
+  <div id="fdr-sticky-banner">🗺️ <span id="fdr-sticky-name"></span></div>
 
   <!-- CLIENT VIEW -->
   <div id="client-view" style="display:none;">
@@ -1321,6 +1323,7 @@ async function renderRouteSheets() {
       const card = document.createElement('div');
       card.className = 'card';
       card.style.marginBottom = '20px';
+      card.dataset.sheetName = sheet.name;
 
       // Card header
       const header = document.createElement('div');
@@ -1660,6 +1663,37 @@ async function renderRouteSheets() {
       card.appendChild(body);
       el.appendChild(card);
     });
+
+    // ── Bandeau sticky FDR (IntersectionObserver) ──────────
+    const banner = document.getElementById('fdr-sticky-banner');
+    const bannerName = document.getElementById('fdr-sticky-name');
+    const cards = el.querySelectorAll('[data-sheet-name]');
+    if (cards.length > 0 && banner) {
+      // Track which cards have crossed the top
+      const aboveTop = new Set();
+      const observer = new IntersectionObserver(entries => {
+        entries.forEach(entry => {
+          const name = entry.target.dataset.sheetName;
+          if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+            aboveTop.add(name);
+          } else {
+            aboveTop.delete(name);
+          }
+        });
+        // Show name of the last card that went above the fold
+        if (aboveTop.size > 0) {
+          // Find the last card (in DOM order) that is above top
+          let lastAbove = '';
+          cards.forEach(c => { if (aboveTop.has(c.dataset.sheetName)) lastAbove = c.dataset.sheetName; });
+          bannerName.textContent = lastAbove;
+          banner.style.display = 'block';
+        } else {
+          banner.style.display = 'none';
+        }
+      }, { threshold: 0, rootMargin: '-61px 0px 0px 0px' });
+      cards.forEach(c => observer.observe(c));
+    }
+    // ── Fin bandeau sticky FDR ─────────────────────────────
 
   } catch(e) {
     el.innerHTML = '<div class="empty"><p>Erreur : ' + e.message + '</p></div>';
@@ -2062,6 +2096,9 @@ function showAdminTab(tab) {
   ['orders','history','clients','routes','settings'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? 'block' : 'none';
   });
+  // Hide/show sticky FDR banner
+  const fdrBanner = document.getElementById('fdr-sticky-banner');
+  if (fdrBanner) fdrBanner.style.display = 'none';
   if (tab === 'orders') renderAdminOrders();
   else if (tab === 'history') renderAdminHistory();
   else if (tab === 'clients') renderAdminClients();
@@ -2114,4 +2151,3 @@ function toast(msg) {
 </script>
 </body>
 </html>
-
