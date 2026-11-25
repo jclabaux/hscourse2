@@ -1287,6 +1287,32 @@ async function deleteClient(id, name) {
 
 // ── ADMIN RECIPIENTS TAB ──────────────────────────────────
 // ── ADMIN SETTINGS TAB ────────────────────────────────────
+// ── EXPORT ANNUAIRE PAR FDR ──────────────────────────────
+async function exportDirectory() {
+  try {
+    const data = await api('route-sheets/export-directory');
+    if (!data || data.length === 0) { toast('⚠️ Aucune donnée à exporter'); return; }
+
+    const wb = XLSX.utils.book_new();
+    data.forEach(function(sheet) {
+      if (!sheet.entries || sheet.entries.length === 0) return;
+      const rows = [['Destinataire', 'Adresse', 'Client']];
+      sheet.entries.forEach(function(e) {
+        rows.push([e.recipient_name || '', e.recipient_address || '', e.client_name || '']);
+      });
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      // Largeurs de colonnes
+      ws['!cols'] = [{ wch: 30 }, { wch: 45 }, { wch: 25 }];
+      const sheetName = sheet.sheet_name.replace(/[:\/?*\[\]]/g, '').substring(0, 31);
+      XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, 'annuaire-fdr-' + today + '.xlsx');
+    toast('✓ Annuaire exporté');
+  } catch(e) { toast('❌ ' + (e.message || 'Erreur export')); }
+}
+
 async function renderRouteSheets() {
   const el = document.getElementById('tab-routes');
   el.innerHTML = '<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>';
@@ -1302,10 +1328,13 @@ async function renderRouteSheets() {
 
     el.innerHTML = '';
 
-    // Add button
+    // Add button + export directory button
     const addBtn = document.createElement('div');
-    addBtn.style.cssText = 'margin-bottom:16px;display:flex;justify-content:flex-end;';
-    addBtn.innerHTML = '<button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>';
+    addBtn.style.cssText = 'margin-bottom:16px;display:flex;justify-content:flex-end;gap:10px;';
+    addBtn.innerHTML = `
+      <button class="btn btn-secondary btn-sm" onclick="exportDirectory()">📋 Exporter l'annuaire</button>
+      <button class="btn btn-primary btn-sm" onclick="showAddRouteSheetModal()">+ Nouvelle feuille de route</button>
+    `;
     el.appendChild(addBtn);
 
     if (sheets.length === 0) {
@@ -1647,40 +1676,36 @@ async function renderRouteSheets() {
     });
 
     // ── Bandeau sticky FDR ─────────────────────────────────
-    // Scroll listener : affiche le nom de la carte dont le haut est passé
-    // sous la navbar mais dont le bas est encore visible (= carte en cours de lecture)
-    (function() {
-      const NAVBAR_H = 62;
+    // Logique : affiche le nom de la dernière card dont le HAUT est sorti au-dessus du fold
+    if (typeof IntersectionObserver !== 'undefined') {
       const banner = document.getElementById('fdr-sticky-banner');
       const bannerName = document.getElementById('fdr-sticky-name');
-      if (!banner) return;
-
-      function updateBanner() {
-        const cards = el.querySelectorAll('[data-sheet-name]');
-        let current = '';
-        cards.forEach(function(card) {
-          const rect = card.getBoundingClientRect();
-          // Prendre la dernière carte dont le haut est au-dessus du fold
-          if (rect.top < NAVBAR_H) {
-            current = card.dataset.sheetName;
+      const allCards = el.querySelectorAll('[data-sheet-name]');
+      if (banner && allCards.length > 0) {
+        const aboveTop = new Set();
+        const obs = new IntersectionObserver(function(entries) {
+          entries.forEach(function(entry) {
+            const name = entry.target.dataset.sheetName;
+            // Card is above the viewport top
+            if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+              aboveTop.add(name);
+            } else {
+              aboveTop.delete(name);
+            }
+          });
+          if (aboveTop.size > 0) {
+            // Show the name of the LAST card above top (= the one just scrolled past)
+            let lastAbove = '';
+            allCards.forEach(c => { if (aboveTop.has(c.dataset.sheetName)) lastAbove = c.dataset.sheetName; });
+            bannerName.textContent = '🗺️ Feuille de route : ' + lastAbove;
+            banner.style.display = 'block';
+          } else {
+            banner.style.display = 'none';
           }
-        });
-        if (current) {
-          bannerName.textContent = '🗺️ Feuille de route : ' + current;
-          banner.style.display = 'block';
-        } else {
-          banner.style.display = 'none';
-        }
+        }, { threshold: 0, rootMargin: '-62px 0px 0px 0px' });
+        allCards.forEach(c => obs.observe(c));
       }
-
-      // Nettoyer l'ancien listener si re-rendu
-      if (window._fdrScrollHandler) {
-        window.removeEventListener('scroll', window._fdrScrollHandler, true);
-      }
-      window._fdrScrollHandler = updateBanner;
-      window.addEventListener('scroll', updateBanner, true);
-      updateBanner(); // état initial
-    })();
+    }
     // ── Fin bandeau sticky ─────────────────────────────────
 
   } catch(e) {

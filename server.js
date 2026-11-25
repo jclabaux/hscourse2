@@ -870,6 +870,31 @@ app.get('/api/route-sheets', requireAdmin, async (req, res) => {
   } catch(e) { res.status(500).json({ error: frenchError(e) }); }
 });
 
+// ── EXPORT ANNUAIRE PAR FDR ───────────────────────────────
+app.get('/api/route-sheets/export-directory', requireAdmin, async (req, res) => {
+  try {
+    const sheets = await pool.query('SELECT id, name FROM route_sheets ORDER BY position, name');
+    const rows = await pool.query(
+      `SELECT rscr.route_sheet_id, c.name AS client_name, r.name AS recipient_name, r.address AS recipient_address
+       FROM route_sheet_client_recipients rscr
+       JOIN clients c ON c.id = rscr.client_id
+       JOIN recipients r ON r.id = rscr.recipient_id
+       ORDER BY r.name`
+    );
+    const result = sheets.rows.map(s => ({
+      sheet_name: s.name,
+      entries: rows.rows
+        .filter(r => r.route_sheet_id === s.id)
+        .map(r => ({
+          recipient_name: r.recipient_name,
+          recipient_address: r.recipient_address || '',
+          client_name: r.client_name
+        }))
+    }));
+    res.json(result);
+  } catch(e) { res.status(500).json({ error: frenchError(e) }); }
+});
+
 app.post('/api/route-sheets', requireAdmin, async (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'Le nom est obligatoire' });
@@ -1306,4 +1331,3 @@ initDB().then(() => {
   console.error('Erreur démarrage:', e);
   process.exit(1);
 });
-
